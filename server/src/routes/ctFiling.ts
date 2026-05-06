@@ -517,10 +517,55 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
     taxApplicable,
     sbrClaimed,
     fixedAssetData,
-    intangibleAssetData
+    intangibleAssetData,
+    isFinalReturn
   } = req.body;
 
   try {
+    // --- Final Return preprocessing ---
+    // When the period is flagged as a final return (deregistration), any remaining
+    // retained earnings balance after the period's profit/loss is transferred to the
+    // shareholder's current account so retained earnings closes at zero.
+    // Contract: caller passes natural closing balances (RE/SCA before transfer);
+    // the server applies the transfer and recomputes equity totals.
+    const profitForFinalReturn = (pnlValues?.profit_after_tax?.currentYear) || 0;
+    const openingREForFinal = (bsValues?.retained_earnings?.previousYear) || 0;
+    const finalReturnTransfer = isFinalReturn ? -(openingREForFinal + profitForFinalReturn) : 0;
+
+    if (isFinalReturn && bsValues) {
+      const userSCAClosing = bsValues['shareholders_current_accounts']?.currentYear || 0;
+      const previousSCA = bsValues['shareholders_current_accounts']?.previousYear || 0;
+
+      bsValues['retained_earnings'] = {
+        previousYear: openingREForFinal,
+        currentYear: 0
+      };
+      bsValues['shareholders_current_accounts'] = {
+        previousYear: previousSCA,
+        currentYear: userSCAClosing - finalReturnTransfer
+      };
+
+      // Recompute equity totals after the override so the BS balances.
+      const equityIds = ['share_capital', 'statutory_reserve', 'retained_earnings', 'shareholders_current_accounts'];
+      let totalEqCurrent = 0;
+      let totalEqPrevious = 0;
+      equityIds.forEach((id) => {
+        totalEqCurrent += (bsValues[id]?.currentYear || 0);
+        totalEqPrevious += (bsValues[id]?.previousYear || 0);
+      });
+      if (bsValues['total_equity']) {
+        bsValues['total_equity'] = { currentYear: totalEqCurrent, previousYear: totalEqPrevious };
+      }
+      if (bsValues['total_equity_liabilities']) {
+        const totalLiabCurrent = (bsValues['total_liabilities']?.currentYear || 0);
+        const totalLiabPrevious = (bsValues['total_liabilities']?.previousYear || 0);
+        bsValues['total_equity_liabilities'] = {
+          currentYear: totalEqCurrent + totalLiabCurrent,
+          previousYear: totalEqPrevious + totalLiabPrevious
+        };
+      }
+    }
+
     let normalizedPnlStructure = normalizePnlPdfStructure(pnlStructure || []);
 
     let customerCountry = "";
@@ -1043,6 +1088,26 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
       const vals = bsValues?.[item.id] || { currentYear: 0, previousYear: 0 };
       return hasMeaningfulAmount(vals.currentYear) || hasMeaningfulAmount(vals.previousYear);
     });
+
+    // --- Final Return: synthesize Notes 4 & 5 (Retained earnings, Shareholder's current account) ---
+    // These notes show the explicit appropriation of retained earnings to the
+    // shareholder's current account on deregistration.
+    if (isFinalReturn && bsWorkingNotes) {
+      const previousSCAForNote = bsValues['shareholders_current_accounts']?.previousYear || 0;
+      const closingSCAForNote = bsValues['shareholders_current_accounts']?.currentYear || 0;
+      const sCAOtherMovement = closingSCAForNote - previousSCAForNote - (-finalReturnTransfer);
+
+      bsWorkingNotes['retained_earnings'] = [
+        { description: 'Opening balance', currentYearAmount: openingREForFinal, previousYearAmount: 0 },
+        { description: 'Total comprehensive income for the year', currentYearAmount: profitForFinalReturn, previousYearAmount: 0 },
+        { description: "Loss transferred to Shareholder's current a/c", currentYearAmount: finalReturnTransfer, previousYearAmount: 0 }
+      ];
+      bsWorkingNotes['shareholders_current_accounts'] = [
+        { description: 'Opening balance', currentYearAmount: previousSCAForNote, previousYearAmount: 0 },
+        { description: 'Net Movements', currentYearAmount: sCAOtherMovement, previousYearAmount: 0 },
+        { description: 'Loss transferred from Retained earnings', currentYearAmount: -finalReturnTransfer, previousYearAmount: 0 }
+      ];
+    }
 
     // --- Build Note Number Map ---
     // Assign sequential note numbers to accounts that have working notes.
@@ -1773,13 +1838,28 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
       return 0;
     });
 
-    // 3. Other movements (Net difference to reconcile)
+    // 3. Other movements (Net difference to reconcile, excluding the explicit
+    //    final-return transfer between RE and Shareholder's current account).
     renderEquityRow('Other movements', (item) => {
       const cur = bsValues[item.id]?.currentYear || 0;
       const prev = bsValues[item.id]?.previousYear || 0;
       const p = (item.id === 'retained_earnings') ? profit : 0;
-      return cur - (prev + p);
+      let movement = cur - (prev + p);
+      if (isFinalReturn) {
+        if (item.id === 'retained_earnings') movement -= finalReturnTransfer;
+        if (item.id === 'shareholders_current_accounts') movement -= -finalReturnTransfer;
+      }
+      return movement;
     });
+
+    // 3b. Final return: explicit transfer of remaining RE balance to SCA.
+    if (isFinalReturn && finalReturnTransfer !== 0) {
+      renderEquityRow("Loss transferred to Shareholder's current a/c", (item) => {
+        if (item.id === 'retained_earnings') return finalReturnTransfer;
+        if (item.id === 'shareholders_current_accounts') return -finalReturnTransfer;
+        return 0;
+      });
+    }
 
     // 4. Balance at end
     const finalEquityRow = renderEquityRow('Balance as at ' + descriptiveEndDate, (item) => bsValues[item.id]?.currentYear || 0, true);

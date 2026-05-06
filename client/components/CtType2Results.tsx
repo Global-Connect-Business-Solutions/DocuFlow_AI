@@ -1360,6 +1360,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
     const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
     const [showTaxPdfSignatoryModal, setShowTaxPdfSignatoryModal] = useState(false);
     const [taxPdfSignatoryName, setTaxPdfSignatoryName] = useState('');
+    const [taxPdfFinalReturn, setTaxPdfFinalReturn] = useState(false);
     const [pendingTaxPdfRequest, setPendingTaxPdfRequest] = useState<{ rows: Array<{ label: string; value: number }>; taxApplicable: boolean } | null>(null);
     const [showPdfPreview, setShowPdfPreview] = useState(false);
     const [previewPdfBlob, setPreviewPdfBlob] = useState<Blob | null>(null);
@@ -4166,7 +4167,8 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
     const handleDownloadFinancialStatementsPDF = useCallback(async (
         authorizedSignatoryName?: string,
         taxComputationRows?: Array<{ label: string; value: number }>,
-        taxApplicable?: boolean
+        taxApplicable?: boolean,
+        isFinalReturn: boolean = false
     ) => {
         setIsDownloadingPdf(true);
         try {
@@ -4260,7 +4262,8 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                 intangibleAssetData,
                 taxComputationRows,
                 taxApplicable,
-                sbrClaimed: questionnaireAnswers[6] === 'Yes'
+                sbrClaimed: questionnaireAnswers[6] === 'Yes',
+                isFinalReturn
             });
 
             const pdfFileName = `${(reportForm.taxableNameEn || companyName || 'Financial_Report').replace(/\s+/g, '_')}.pdf`;
@@ -8276,16 +8279,19 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
             const taxApplicable = (Number(mergedTaxData.corporateTaxLiability) || 0) > 0 || (Number(mergedTaxData.corporateTaxPayable) || 0) > 0;
             setPendingTaxPdfRequest({ rows, taxApplicable });
             setTaxPdfSignatoryName('');
+            setTaxPdfFinalReturn(false);
             setShowTaxPdfSignatoryModal(true);
         };
         const handleConfirmTaxPdfDownload = async (withoutName = false) => {
             if (!pendingTaxPdfRequest) return;
             const payload = pendingTaxPdfRequest;
             const normalizedName = withoutName ? '' : taxPdfSignatoryName.trim();
+            const isFinalReturn = taxPdfFinalReturn;
             setShowTaxPdfSignatoryModal(false);
             setPendingTaxPdfRequest(null);
             setTaxPdfSignatoryName('');
-            await handleDownloadFinancialStatementsPDF(normalizedName || undefined, payload.rows, payload.taxApplicable);
+            setTaxPdfFinalReturn(false);
+            await handleDownloadFinancialStatementsPDF(normalizedName || undefined, payload.rows, payload.taxApplicable, isFinalReturn);
         };
 
         return (
@@ -8376,6 +8382,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                 <button
                                     onClick={() => {
                                         setTaxPdfSignatoryName('');
+                                        setTaxPdfFinalReturn(false);
                                         setPendingTaxPdfRequest(null);
                                         setShowTaxPdfSignatoryModal(false);
                                     }}
@@ -8384,17 +8391,33 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                     <XMarkIcon className="w-5 h-5" />
                                 </button>
                             </div>
-                            <div className="p-5 space-y-3">
-                                <p className="text-xs text-muted-foreground">
-                                    Enter signatory name to print in PDF footer. Leave empty to download without name.
-                                </p>
-                                <input
-                                    type="text"
-                                    value={taxPdfSignatoryName}
-                                    onChange={(e) => setTaxPdfSignatoryName(e.target.value)}
-                                    placeholder="e.g. Alex Morgan"
-                                    className="w-full p-3 bg-muted border border-border rounded-lg text-foreground text-sm focus:ring-1 focus:ring-primary outline-none"
-                                />
+                            <div className="p-5 space-y-4">
+                                <div className="space-y-2">
+                                    <p className="text-xs text-muted-foreground">
+                                        Enter signatory name to print in PDF footer. Leave empty to download without name.
+                                    </p>
+                                    <input
+                                        type="text"
+                                        value={taxPdfSignatoryName}
+                                        onChange={(e) => setTaxPdfSignatoryName(e.target.value)}
+                                        placeholder="e.g. Alex Morgan"
+                                        className="w-full p-3 bg-muted border border-border rounded-lg text-foreground text-sm focus:ring-1 focus:ring-primary outline-none"
+                                    />
+                                </div>
+                                <label className="flex items-start space-x-3 p-3 bg-muted/40 border border-border rounded-lg cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={taxPdfFinalReturn}
+                                        onChange={(e) => setTaxPdfFinalReturn(e.target.checked)}
+                                        className="mt-1 w-4 h-4 accent-primary cursor-pointer"
+                                    />
+                                    <div>
+                                        <span className="block text-xs font-bold text-foreground uppercase tracking-widest">Final Return (Deregistration)</span>
+                                        <span className="block text-xs text-muted-foreground mt-1">
+                                            Last FS before the company deregisters from CT. Any remaining retained earnings balance will be transferred to the Shareholder's current account so retained earnings closes at zero.
+                                        </span>
+                                    </div>
+                                </label>
                             </div>
                             <div className="p-4 border-t border-border bg-muted/50 flex justify-end gap-3">
                                 <button
