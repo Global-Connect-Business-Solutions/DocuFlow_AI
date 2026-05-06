@@ -989,75 +989,37 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
             switch (stepId) {
                 case 1: stepData = { openingBalancesData, obWorkingNotes }; break;
                 case 2: {
-                    const latestSavedStep2 = [...(workflowData || [])]
-                        .filter((step: any) => ((step.stepNumber ?? step.step_number) === 2) && Array.isArray((step.data as any)?.adjustedTrialBalance))
-                        .sort((a, b) => {
-                            const ta = new Date((a.updated_at as any) || 0).getTime();
-                            const tb = new Date((b.updated_at as any) || 0).getTime();
-                            return tb - ta;
-                        })[0];
+                    const persistedDataRows = (adjustedTrialBalance || [])
+                        .filter((entry) => entry.account.toLowerCase() !== 'totals')
+                        .map((entry) => {
+                            const notes = tbWorkingNotes[entry.account] || [];
+                            const noteTotals = getTbWorkingNoteTotals(notes);
+                            const currentDebit = Number(entry.debit) || 0;
+                            const currentCredit = Number(entry.credit) || 0;
+                            const previousDebit = Number(entry.previousDebit) || 0;
+                            const previousCredit = Number(entry.previousCredit) || 0;
 
-                    const savedRows = ((latestSavedStep2?.data as any)?.adjustedTrialBalance || []) as TrialBalanceEntry[];
-                    const savedByAccount = new Map<string, TrialBalanceEntry>();
-                    savedRows.forEach((row) => {
-                        if (!row?.account || row.account.toLowerCase() === 'totals') return;
-                        savedByAccount.set(normalizeAccountName(row.account), row);
-                    });
+                            const baseDebit = entry.baseDebit !== undefined ? (Number(entry.baseDebit) || 0) : (currentDebit - noteTotals.currentDebit);
+                            const baseCredit = entry.baseCredit !== undefined ? (Number(entry.baseCredit) || 0) : (currentCredit - noteTotals.currentCredit);
+                            const basePreviousDebit = entry.basePreviousDebit !== undefined ? (Number(entry.basePreviousDebit) || 0) : (previousDebit - noteTotals.previousDebit);
+                            const basePreviousCredit = entry.basePreviousCredit !== undefined ? (Number(entry.basePreviousCredit) || 0) : (previousCredit - noteTotals.previousCredit);
 
-                    const persistedTrialBalance = getTrialBalanceRowsWithComputedTotals(adjustedTrialBalance).map((entry) => {
-                        if (entry.account.toLowerCase() === 'totals') {
                             return {
                                 ...entry,
-                                debit: round2(Number(entry.debit) || 0),
-                                credit: round2(Number(entry.credit) || 0),
-                                previousDebit: round2(Number(entry.previousDebit) || 0),
-                                previousCredit: round2(Number(entry.previousCredit) || 0),
+                                debit: round2(currentDebit),
+                                credit: round2(currentCredit),
+                                previousDebit: round2(previousDebit),
+                                previousCredit: round2(previousCredit),
+                                baseDebit: round2(baseDebit),
+                                baseCredit: round2(baseCredit),
+                                basePreviousDebit: round2(basePreviousDebit),
+                                basePreviousCredit: round2(basePreviousCredit),
                             };
-                        }
+                        });
 
-                        const notes = tbWorkingNotes[entry.account] || [];
-                        const noteTotals = getTbWorkingNoteTotals(notes);
-                        const currentDebit = Number(entry.debit) || 0;
-                        const currentCredit = Number(entry.credit) || 0;
-                        const previousDebit = Number(entry.previousDebit) || 0;
-                        const previousCredit = Number(entry.previousCredit) || 0;
-
-                        const baseDebit = entry.baseDebit !== undefined ? (Number(entry.baseDebit) || 0) : (currentDebit - noteTotals.currentDebit);
-                        const baseCredit = entry.baseCredit !== undefined ? (Number(entry.baseCredit) || 0) : (currentCredit - noteTotals.currentCredit);
-                        const basePreviousDebit = entry.basePreviousDebit !== undefined ? (Number(entry.basePreviousDebit) || 0) : (previousDebit - noteTotals.previousDebit);
-                        const basePreviousCredit = entry.basePreviousCredit !== undefined ? (Number(entry.basePreviousCredit) || 0) : (previousCredit - noteTotals.previousCredit);
-
-                        const currentSideZeroed = Math.abs(currentDebit) <= 0.01 && Math.abs(currentCredit) <= 0.01;
-                        const previousSideZeroed = Math.abs(previousDebit) <= 0.01 && Math.abs(previousCredit) <= 0.01;
-                        const hasCurrentBase = Math.abs(baseDebit) > 0.01 || Math.abs(baseCredit) > 0.01;
-                        const hasPreviousBase = Math.abs(basePreviousDebit) > 0.01 || Math.abs(basePreviousCredit) > 0.01;
-
-                        const persistedDebit = currentSideZeroed && hasCurrentBase ? (baseDebit + noteTotals.currentDebit) : currentDebit;
-                        const persistedCredit = currentSideZeroed && hasCurrentBase ? (baseCredit + noteTotals.currentCredit) : currentCredit;
-                        const persistedPreviousDebit = previousSideZeroed && hasPreviousBase ? (basePreviousDebit + noteTotals.previousDebit) : previousDebit;
-                        const persistedPreviousCredit = previousSideZeroed && hasPreviousBase ? (basePreviousCredit + noteTotals.previousCredit) : previousCredit;
-
-                        const savedRow = savedByAccount.get(normalizeAccountName(entry.account));
-                        const keepSavedCurrent = !hasCurrentBase && Math.abs(persistedDebit) <= 0.01 && Math.abs(persistedCredit) <= 0.01;
-                        const keepSavedPrevious = !hasPreviousBase && Math.abs(persistedPreviousDebit) <= 0.01 && Math.abs(persistedPreviousCredit) <= 0.01;
-
-                        const finalDebit = keepSavedCurrent ? (Number(savedRow?.debit) || 0) : persistedDebit;
-                        const finalCredit = keepSavedCurrent ? (Number(savedRow?.credit) || 0) : persistedCredit;
-                        const finalPreviousDebit = keepSavedPrevious ? (Number(savedRow?.previousDebit) || 0) : persistedPreviousDebit;
-                        const finalPreviousCredit = keepSavedPrevious ? (Number(savedRow?.previousCredit) || 0) : persistedPreviousCredit;
-
-                        return {
-                            ...entry,
-                            debit: round2(finalDebit),
-                            credit: round2(finalCredit),
-                            previousDebit: round2(finalPreviousDebit),
-                            previousCredit: round2(finalPreviousCredit),
-                            baseDebit: round2(baseDebit),
-                            baseCredit: round2(baseCredit),
-                            basePreviousDebit: round2(basePreviousDebit),
-                            basePreviousCredit: round2(basePreviousCredit),
-                        };
-                    });
+                    const persistedTrialBalance = persistedDataRows.length > 0
+                        ? [...persistedDataRows, buildTbTotalsRow(persistedDataRows)]
+                        : [];
 
                     stepData = { adjustedTrialBalance: persistedTrialBalance, tbWorkingNotes, tbYearImportMode, tbCoaCustomTargets };
                     break;
@@ -1174,7 +1136,38 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                     shouldRepopulateFromTbFlow = true;
                     break;
                 case 2:
-                    if (sData.adjustedTrialBalance) setAdjustedTrialBalance(sData.adjustedTrialBalance);
+                    if (sData.adjustedTrialBalance) {
+                        const savedNotes = (sData.tbWorkingNotes || {}) as Record<string, TbWorkingNoteEntry[]>;
+                        const healedDataRows = (sData.adjustedTrialBalance as TrialBalanceEntry[])
+                            .filter((entry) => entry?.account && entry.account.toLowerCase() !== 'totals')
+                            .map((entry) => {
+                                const notes = savedNotes[entry.account] || [];
+                                const noteTotals = getTbWorkingNoteTotals(notes);
+                                const currentDebit = Number(entry.debit) || 0;
+                                const currentCredit = Number(entry.credit) || 0;
+                                const previousDebit = Number(entry.previousDebit) || 0;
+                                const previousCredit = Number(entry.previousCredit) || 0;
+                                const baseDebit = entry.baseDebit !== undefined ? (Number(entry.baseDebit) || 0) : (currentDebit - noteTotals.currentDebit);
+                                const baseCredit = entry.baseCredit !== undefined ? (Number(entry.baseCredit) || 0) : (currentCredit - noteTotals.currentCredit);
+                                const basePreviousDebit = entry.basePreviousDebit !== undefined ? (Number(entry.basePreviousDebit) || 0) : (previousDebit - noteTotals.previousDebit);
+                                const basePreviousCredit = entry.basePreviousCredit !== undefined ? (Number(entry.basePreviousCredit) || 0) : (previousCredit - noteTotals.previousCredit);
+                                return {
+                                    ...entry,
+                                    baseDebit: round2(baseDebit),
+                                    baseCredit: round2(baseCredit),
+                                    basePreviousDebit: round2(basePreviousDebit),
+                                    basePreviousCredit: round2(basePreviousCredit),
+                                    debit: round2(baseDebit + noteTotals.currentDebit),
+                                    credit: round2(baseCredit + noteTotals.currentCredit),
+                                    previousDebit: round2(basePreviousDebit + noteTotals.previousDebit),
+                                    previousCredit: round2(basePreviousCredit + noteTotals.previousCredit),
+                                };
+                            });
+                        const healedTrialBalance = healedDataRows.length > 0
+                            ? [...healedDataRows, buildTbTotalsRow(healedDataRows)]
+                            : [];
+                        setAdjustedTrialBalance(healedTrialBalance);
+                    }
                     if (sData.tbWorkingNotes) setTbWorkingNotes(sData.tbWorkingNotes);
                     if (sData.tbYearImportMode) setTbYearImportMode(normalizeTbYearImportMode(sData.tbYearImportMode));
                     if (sData.tbCoaCustomTargets) setTbCoaCustomTargets(sData.tbCoaCustomTargets);
@@ -7009,16 +7002,16 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
     };
 
     const renderAdjustTB = () => {
-        const grandTotal = {
-            debit: adjustedTrialBalance?.find(i => i.account === 'Totals')?.debit || 0,
-            credit: adjustedTrialBalance?.find(i => i.account === 'Totals')?.credit || 0
-        };
-        const grandTotalPrevious = (adjustedTrialBalance || [])
-            .filter(i => i.account !== 'Totals')
-            .reduce((acc, item) => ({
-                debit: acc.debit + (Number(item.previousDebit) || 0),
-                credit: acc.credit + (Number(item.previousCredit) || 0)
-            }), { debit: 0, credit: 0 });
+        const tbDataRowsForTotals = (adjustedTrialBalance || [])
+            .filter(i => i.account.toLowerCase() !== 'totals');
+        const grandTotal = tbDataRowsForTotals.reduce((acc, item) => ({
+            debit: acc.debit + (Number(item.debit) || 0),
+            credit: acc.credit + (Number(item.credit) || 0)
+        }), { debit: 0, credit: 0 });
+        const grandTotalPrevious = tbDataRowsForTotals.reduce((acc, item) => ({
+            debit: acc.debit + (Number(item.previousDebit) || 0),
+            credit: acc.credit + (Number(item.previousCredit) || 0)
+        }), { debit: 0, credit: 0 });
         const STRICT_BALANCE_TOLERANCE = 0.1;
         const ROUNDING_BALANCE_TOLERANCE = 1;
         const cyVariance = round2(Math.abs(grandTotal.debit - grandTotal.credit));
