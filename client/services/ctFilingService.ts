@@ -129,6 +129,20 @@ export const ctFilingService = {
     return apiFetch(`/ct-workflow/conversions/${encodeURIComponent(conversionId)}`);
   },
 
+  async getPreviousYearLoss(customerId: string, periodId: string): Promise<{
+    broughtForward: number;
+    source: string;
+    priorPeriodId?: string;
+    priorPeriodFrom?: string;
+    priorPeriodTo?: string;
+    priorConversionId?: string;
+  }> {
+    const data = await apiFetch(
+      `/ct-workflow/previous-year-loss?customerId=${encodeURIComponent(customerId)}&periodId=${encodeURIComponent(periodId)}`
+    );
+    return data || { broughtForward: 0, source: "unknown" };
+  },
+
   async listConversions(periodId: string, ctTypeId: string): Promise<any[]> {
     return apiFetch(`/ct-workflow/list?periodId=${encodeURIComponent(periodId)}&ctTypeId=${encodeURIComponent(ctTypeId)}`);
   },

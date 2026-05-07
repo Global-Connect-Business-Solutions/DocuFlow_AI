@@ -44,6 +44,95 @@ router.get("/conversions/:conversionId", requireAuth, async (req: AuthedRequest,
 });
 
 /**
+ * GET /api/ct-workflow/previous-year-loss
+ * Finds the carried-forward tax loss from the immediately prior filing period
+ * for the same customer. Returns 0 if no qualifying prior filing exists.
+ *
+ * Query params:
+ *   - customerId (required)
+ *   - periodId   (required) — the *current* period whose previous year we want
+ */
+router.get("/previous-year-loss", requireAuth, async (req: AuthedRequest, res) => {
+    const { customerId, periodId } = req.query as { customerId?: string; periodId?: string };
+    if (!customerId || !periodId) {
+        return res.status(400).json({ message: "customerId and periodId are required" });
+    }
+
+    // 1. Resolve the current period's start date
+    const { data: currentPeriod, error: curErr } = await supabaseAdmin
+        .from("ct_filing_period")
+        .select("id, period_from, period_to, customer_id")
+        .eq("id", periodId)
+        .maybeSingle();
+
+    if (curErr) return res.status(500).json({ message: curErr.message });
+    if (!currentPeriod) return res.status(404).json({ message: "Period not found" });
+
+    // 2. Find prior periods for this customer that ended before the current period began
+    const { data: priorPeriods, error: prErr } = await supabaseAdmin
+        .from("ct_filing_period")
+        .select("id, period_from, period_to")
+        .eq("customer_id", customerId)
+        .lt("period_to", currentPeriod.period_from || "9999-01-01")
+        .order("period_to", { ascending: false })
+        .limit(5);
+
+    if (prErr) return res.status(500).json({ message: prErr.message });
+    if (!priorPeriods || priorPeriods.length === 0) {
+        return res.json({ broughtForward: 0, source: "no_prior_period" });
+    }
+
+    // 3. For the most recent prior period, find a conversion with completed/tax_completed/submitted status
+    for (const p of priorPeriods) {
+        const { data: convs } = await supabaseAdmin
+            .from("ct_workflow_data_conversions")
+            .select("id, status, updated_at")
+            .eq("customer_id", customerId)
+            .eq("period_id", p.id)
+            .in("status", ["completed", "tax_completed", "submitted"])
+            .order("updated_at", { ascending: false });
+
+        if (!convs || convs.length === 0) continue;
+
+        for (const conv of convs) {
+            // Find the tax computation step
+            const { data: steps } = await supabaseAdmin
+                .from("ct_workflow_data")
+                .select("step_key, data")
+                .eq("conversion_id", conv.id);
+
+            if (!steps) continue;
+            const taxStep = steps.find(s => typeof s.step_key === "string" && s.step_key.includes("tax_computation"));
+            if (!taxStep) continue;
+
+            const data = (taxStep.data as any) || {};
+            // Prefer the carried-forward from the schedule (set when feature was used)
+            const schedule = data.taxLossesSchedule || {};
+            const carriedForward = Number(schedule.carriedForwardAvailable) || 0;
+
+            // Fallback: if no schedule yet, but the prior period's taxableIncomeTaxPeriod was negative, use its absolute value
+            let broughtForward = carriedForward;
+            if (!broughtForward) {
+                const taxComp = data.taxComputation || {};
+                const priorTaxable = Number(taxComp.taxableIncomeTaxPeriod) || 0;
+                if (priorTaxable < 0) broughtForward = Math.abs(Math.round(priorTaxable));
+            }
+
+            return res.json({
+                broughtForward: Math.max(0, Math.round(broughtForward)),
+                source: "prior_filing",
+                priorPeriodId: p.id,
+                priorPeriodFrom: p.period_from,
+                priorPeriodTo: p.period_to,
+                priorConversionId: conv.id
+            });
+        }
+    }
+
+    return res.json({ broughtForward: 0, source: "no_prior_completed_filing" });
+});
+
+/**
  * GET /api/ct-workflow/list
  * Lists all conversions for a specific period and CT type.
  */

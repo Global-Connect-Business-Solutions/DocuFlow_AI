@@ -73,6 +73,7 @@ import { extractTextFromPDF, convertFileToParts } from '../utils/fileUtils';
 import type { Part } from '../utils/fileUtils';
 import { parseAdditionalStatementExcelFile } from '../utils/additionalStatementExcel';
 import { extractPreviousYearCorporateTaxFromTrialBalance, isCorporateTaxExpenseLikeLabel } from '../utils/ctTrialBalanceTax';
+import { TaxLossesScheduleModal, computeTaxLossesSchedule, DEFAULT_TAX_LOSSES_SCHEDULE, type TaxLossesSchedule } from './TaxLossesScheduleModal';
 
 // This tells TypeScript that XLSX and pdfjsLib will be available on the window object
 declare const XLSX: any;
@@ -915,6 +916,10 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
     const [isRestoring, setIsRestoring] = useState(true);
     const [showSbrModal, setShowSbrModal] = useState(false);
     const [taxComputationEdits, setTaxComputationEdits] = useState<Record<string, number>>({});
+    const [taxLossesSchedule, setTaxLossesSchedule] = useState<TaxLossesSchedule>(DEFAULT_TAX_LOSSES_SCHEDULE);
+    const [showTaxLossesScheduleModal, setShowTaxLossesScheduleModal] = useState(false);
+    const [previousYearLossLoadStatus, setPreviousYearLossLoadStatus] = useState<'idle' | 'loading' | 'loaded' | 'no_prior'>('idle');
+    const [previousYearLossHint, setPreviousYearLossHint] = useState<string>('');
 
     const handleSaveStep = async (stepNumber: number, data: any, status: 'draft' | 'completed' | 'submitted' = 'completed') => {
         if (!customerId || !ctTypeId || !periodId) return;
@@ -1062,6 +1067,10 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 }
                 if (stepNum === 9 && data?.taxComputation) {
                     setTaxComputationEdits(data.taxComputation);
+                }
+                if (stepNum === 9 && data?.taxLossesSchedule) {
+                    setTaxLossesSchedule({ ...DEFAULT_TAX_LOSSES_SCHEDULE, ...data.taxLossesSchedule });
+                    setPreviousYearLossLoadStatus('loaded');
                 }
                 if (stepNum === 10) {
                     if (data?.louData) {
@@ -2511,7 +2520,7 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 6: { adjustedTrialBalance, breakdowns },
                 7: { pnlValues, pnlWorkingNotes, pnlManualEdits: Array.from(pnlManualEditsRef.current) },
                 8: { balanceSheetValues, bsWorkingNotes, bsManualEdits: Array.from(bsManualEditsRef.current), fixedAssetData, intangibleAssetData },
-                9: { taxComputation: taxComputationEdits },
+                9: { taxComputation: taxComputationEdits, taxLossesSchedule },
                 12: { questionnaireAnswers },
             };
             const currentData = stepDataMap[currentStep] || {};
@@ -4878,7 +4887,10 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
         || 0
     );
 
-    const computeType1TaxData = (source: Record<string, number> = taxComputationEdits): Record<string, number> => {
+    const computeType1TaxData = (
+        source: Record<string, number> = taxComputationEdits,
+        scheduleSource: TaxLossesSchedule = taxLossesSchedule
+    ): Record<string, number> => {
         const toInt = (v: unknown) => Math.round(Number(v) || 0);
         const isSbrClaimed = questionnaireAnswers[6] === 'Yes';
         const accountingBase = getType1TaxBaseFromPnl();
@@ -4921,23 +4933,85 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
         ];
 
         const adjustmentsTotal = adjustmentFields.reduce((sum, key) => sum + toInt(data[key]), 0);
-        const taxLossesUtilised = toInt(data.taxLossesUtilised);
+        const taxableIncomeBeforeAdj = toInt(accountingBase + adjustmentsTotal);
+
+        const computedSchedule = computeTaxLossesSchedule(scheduleSource, taxableIncomeBeforeAdj);
+        const taxLossesUtilised = computedSchedule.utilisedCurrentPeriod;
+
         const taxLossesClaimed = toInt(data.taxLossesClaimed);
         const preGroupingLosses = toInt(data.preGroupingLosses);
         const taxCredits = toInt(data.taxCredits);
 
-        const taxableIncomeBeforeAdj = toInt(accountingBase + adjustmentsTotal);
         const taxableIncomeTaxPeriod = toInt(taxableIncomeBeforeAdj - taxLossesUtilised - taxLossesClaimed - preGroupingLosses);
         const corporateTaxLiability = isSbrClaimed ? 0 : toInt(Math.max(0, taxableIncomeTaxPeriod - 375000) * 0.09);
         const corporateTaxPayable = toInt(Math.max(0, corporateTaxLiability - taxCredits));
 
         data.accountingIncomeTaxPeriod = accountingBase;
         data.taxableIncomeBeforeAdj = taxableIncomeBeforeAdj;
+        data.taxLossesUtilised = taxLossesUtilised;
         data.taxableIncomeTaxPeriod = taxableIncomeTaxPeriod;
         data.corporateTaxLiability = corporateTaxLiability;
         data.corporateTaxPayable = corporateTaxPayable;
 
         return data;
+    };
+
+    // Auto-load previous year's carried-forward loss into the schedule's broughtForward
+    // (only if the user hasn't manually overridden, and only once per session).
+    const previousYearLossFetchedRef = useRef(false);
+    useEffect(() => {
+        if (previousYearLossFetchedRef.current) return;
+        if (!customerId || !periodId) return;
+        if (taxLossesSchedule.broughtForwardManuallyOverridden) return;
+        if (previousYearLossLoadStatus === 'loaded') return;
+        previousYearLossFetchedRef.current = true;
+        setPreviousYearLossLoadStatus('loading');
+        ctFilingService.getPreviousYearLoss(customerId, periodId).then(res => {
+            if (res.broughtForward > 0) {
+                setTaxLossesSchedule(prev => ({
+                    ...prev,
+                    broughtForward: res.broughtForward,
+                    broughtForwardManuallyOverridden: false,
+                }));
+                setPreviousYearLossHint(
+                    res.priorPeriodFrom
+                        ? `Loaded ${res.broughtForward.toLocaleString()} AED from prior filing (${res.priorPeriodFrom} to ${res.priorPeriodTo}).`
+                        : `Loaded ${res.broughtForward.toLocaleString()} AED from prior filing.`
+                );
+                setPreviousYearLossLoadStatus('loaded');
+            } else {
+                setPreviousYearLossLoadStatus('no_prior');
+            }
+        }).catch(err => {
+            console.error('Failed to fetch previous year loss:', err);
+            setPreviousYearLossLoadStatus('no_prior');
+        });
+    }, [customerId, periodId, taxLossesSchedule.broughtForwardManuallyOverridden, previousYearLossLoadStatus]);
+
+    const handleAutoLoadPreviousYearLoss = async () => {
+        if (!customerId || !periodId) return;
+        setPreviousYearLossLoadStatus('loading');
+        try {
+            const res = await ctFilingService.getPreviousYearLoss(customerId, periodId);
+            if (res.broughtForward > 0) {
+                setTaxLossesSchedule(prev => ({
+                    ...prev,
+                    broughtForward: res.broughtForward,
+                    broughtForwardManuallyOverridden: false,
+                }));
+                setPreviousYearLossHint(
+                    res.priorPeriodFrom
+                        ? `Loaded ${res.broughtForward.toLocaleString()} AED from prior filing (${res.priorPeriodFrom} to ${res.priorPeriodTo}).`
+                        : `Loaded ${res.broughtForward.toLocaleString()} AED from prior filing.`
+                );
+                setPreviousYearLossLoadStatus('loaded');
+            } else {
+                setPreviousYearLossLoadStatus('no_prior');
+            }
+        } catch (e) {
+            console.error('Auto-load failed:', e);
+            setPreviousYearLossLoadStatus('no_prior');
+        }
     };
 
     const syncType1TaxToStatements = (taxData: Record<string, number>) => {
@@ -5016,7 +5090,8 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
 
     const handleContinueToLOU = async () => {
         const taxSummary = REPORT_STRUCTURE.find(s => s.id === 'tax-summary');
-        const computedTaxData = computeType1TaxData(taxComputationEdits);
+        const computedTaxData = computeType1TaxData(taxComputationEdits, taxLossesSchedule);
+        const computedSchedule = computeTaxLossesSchedule(taxLossesSchedule, computedTaxData.taxableIncomeBeforeAdj || 0);
 
         const mergedTaxData = taxSummary
             ? taxSummary.fields
@@ -5028,7 +5103,8 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
             : {};
 
         syncType1TaxToStatements(mergedTaxData);
-        await handleSaveStep(9, { taxComputation: mergedTaxData }, 'completed');
+        setTaxLossesSchedule(computedSchedule);
+        await handleSaveStep(9, { taxComputation: mergedTaxData, taxLossesSchedule: computedSchedule }, 'completed');
         isManualNavigationRef.current = true;
         setCurrentStep(10);
     };
@@ -7174,7 +7250,8 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
     const renderStep9TaxComputation = () => {
         const taxSummary = REPORT_STRUCTURE.find(s => s.id === 'tax-summary');
         if (!taxSummary) return null;
-        const computedTaxData = computeType1TaxData(taxComputationEdits);
+        const computedTaxData = computeType1TaxData(taxComputationEdits, taxLossesSchedule);
+        const computedSchedule = computeTaxLossesSchedule(taxLossesSchedule, computedTaxData.taxableIncomeBeforeAdj || 0);
         const buildMergedTaxData = () => (
             taxSummary.fields
                 .filter((f: any) => f.type !== 'header')
@@ -7186,8 +7263,9 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
         const handleDownloadTaxStepPdf = async () => {
             const mergedTaxData = buildMergedTaxData();
             setTaxComputationEdits(prev => ({ ...prev, ...mergedTaxData }));
+            setTaxLossesSchedule(computedSchedule);
             syncType1TaxToStatements(mergedTaxData);
-            await handleSaveStep(9, { taxComputation: mergedTaxData }, 'completed');
+            await handleSaveStep(9, { taxComputation: mergedTaxData, taxLossesSchedule: computedSchedule }, 'completed');
             const rows = taxSummary.fields
                 .filter((f: any) => f.type !== 'header')
                 .map((f: any) => ({
@@ -7256,16 +7334,28 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                                 }
 
                                 const currentValue = computedTaxData[f.field] ?? 0;
+                                const isTaxLossesUtilised = f.field === 'taxLossesUtilised';
 
                                 return (
                                     <div key={f.field} className={`flex justify-between items-center p-4 bg-muted/20 rounded-xl border border-border/50 ${f.highlight ? 'bg-primary/5 border-primary/20 ring-1 ring-primary/10' : ''}`}>
                                         <span className={`text-xs font-bold text-muted-foreground uppercase tracking-tight ${f.highlight ? 'text-primary' : ''}`}>{f.label}</span>
                                         <div className="flex items-center gap-2">
+                                            {isTaxLossesUtilised && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowTaxLossesScheduleModal(true)}
+                                                    className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
+                                                    title="Edit Tax Losses Schedule"
+                                                >
+                                                    Edit Schedule
+                                                </button>
+                                            )}
                                             <input
                                                 type="number"
                                                 value={currentValue}
+                                                disabled={isTaxLossesUtilised}
                                                 onChange={(e) => setTaxComputationEdits(prev => ({ ...prev, [f.field]: Math.round(parseFloat(e.target.value) || 0) }))}
-                                                className={`font-mono font-bold text-base text-right bg-transparent border-b border-transparent hover:border-border focus:border-primary outline-none transition-all w-48 ${f.highlight ? 'text-primary' : 'text-foreground'}`}
+                                                className={`font-mono font-bold text-base text-right bg-transparent border-b border-transparent hover:border-border focus:border-primary outline-none transition-all w-48 ${f.highlight ? 'text-primary' : 'text-foreground'} ${isTaxLossesUtilised ? 'cursor-not-allowed opacity-80' : ''}`}
                                             />
                                             <span className="text-[10px] opacity-60 ml-0.5">{currency}</span>
                                         </div>
@@ -7293,6 +7383,18 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                     </div>
                 </div>
                 </div>
+                <TaxLossesScheduleModal
+                    isOpen={showTaxLossesScheduleModal}
+                    onClose={() => setShowTaxLossesScheduleModal(false)}
+                    schedule={taxLossesSchedule}
+                    onChange={setTaxLossesSchedule}
+                    taxableIncomeBeforeAdj={computedTaxData.taxableIncomeBeforeAdj || 0}
+                    currency={currency}
+                    onAutoLoadPreviousYear={handleAutoLoadPreviousYearLoss}
+                    autoLoadStatus={previousYearLossLoadStatus}
+                    autoLoadHint={previousYearLossHint}
+                    isReadOnly={questionnaireAnswers[6] === 'Yes'}
+                />
                 {showTaxPdfSignatoryModal && createPortal(
                     <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
                         <div className="bg-card rounded-xl border border-border shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
