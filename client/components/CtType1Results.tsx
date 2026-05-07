@@ -4956,8 +4956,22 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
         return data;
     };
 
+    // Helper: derive brought-forward fallback from P&L's previous-year Net Profit/(Loss)
+    const getPnlPreviousYearLoss = useCallback((): number => {
+        const candidates = [
+            pnlValues?.['total_comprehensive_income']?.previousYear,
+            pnlValues?.['profit_after_tax']?.previousYear,
+            pnlValues?.['profit_loss_year']?.previousYear,
+        ];
+        for (const v of candidates) {
+            const n = Number(v);
+            if (Number.isFinite(n) && n < 0) return Math.abs(Math.round(n));
+        }
+        return 0;
+    }, [pnlValues]);
+
     // Auto-load previous year's carried-forward loss into the schedule's broughtForward
-    // (only if the user hasn't manually overridden, and only once per session).
+    // Priority: prior CT filing → P&L previous-year loss → 0
     const previousYearLossFetchedRef = useRef(false);
     useEffect(() => {
         if (previousYearLossFetchedRef.current) return;
@@ -4980,13 +4994,35 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 );
                 setPreviousYearLossLoadStatus('loaded');
             } else {
-                setPreviousYearLossLoadStatus('no_prior');
+                const pnlLoss = getPnlPreviousYearLoss();
+                if (pnlLoss > 0) {
+                    setTaxLossesSchedule(prev => ({
+                        ...prev,
+                        broughtForward: pnlLoss,
+                        broughtForwardManuallyOverridden: false,
+                    }));
+                    setPreviousYearLossHint(`Loaded ${pnlLoss.toLocaleString()} AED from P&L previous-year loss.`);
+                    setPreviousYearLossLoadStatus('loaded');
+                } else {
+                    setPreviousYearLossLoadStatus('no_prior');
+                }
             }
         }).catch(err => {
             console.error('Failed to fetch previous year loss:', err);
-            setPreviousYearLossLoadStatus('no_prior');
+            const pnlLoss = getPnlPreviousYearLoss();
+            if (pnlLoss > 0) {
+                setTaxLossesSchedule(prev => ({
+                    ...prev,
+                    broughtForward: pnlLoss,
+                    broughtForwardManuallyOverridden: false,
+                }));
+                setPreviousYearLossHint(`Loaded ${pnlLoss.toLocaleString()} AED from P&L previous-year loss.`);
+                setPreviousYearLossLoadStatus('loaded');
+            } else {
+                setPreviousYearLossLoadStatus('no_prior');
+            }
         });
-    }, [customerId, periodId, taxLossesSchedule.broughtForwardManuallyOverridden, previousYearLossLoadStatus]);
+    }, [customerId, periodId, taxLossesSchedule.broughtForwardManuallyOverridden, previousYearLossLoadStatus, getPnlPreviousYearLoss]);
 
     const handleAutoLoadPreviousYearLoss = async () => {
         if (!customerId || !periodId) return;
@@ -5005,11 +5041,21 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                         : `Loaded ${res.broughtForward.toLocaleString()} AED from prior filing.`
                 );
                 setPreviousYearLossLoadStatus('loaded');
-            } else {
-                setPreviousYearLossLoadStatus('no_prior');
+                return;
             }
         } catch (e) {
-            console.error('Auto-load failed:', e);
+            console.error('Auto-load (prior filing) failed:', e);
+        }
+        const pnlLoss = getPnlPreviousYearLoss();
+        if (pnlLoss > 0) {
+            setTaxLossesSchedule(prev => ({
+                ...prev,
+                broughtForward: pnlLoss,
+                broughtForwardManuallyOverridden: false,
+            }));
+            setPreviousYearLossHint(`Loaded ${pnlLoss.toLocaleString()} AED from P&L previous-year loss.`);
+            setPreviousYearLossLoadStatus('loaded');
+        } else {
             setPreviousYearLossLoadStatus('no_prior');
         }
     };

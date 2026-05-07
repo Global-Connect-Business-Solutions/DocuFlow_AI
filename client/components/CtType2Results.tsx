@@ -3142,6 +3142,10 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
         setCurrentStep(13);
     }, [handleSaveStep, computeType2TaxData, taxComputationEdits, taxLossesSchedule, syncType2TaxToStatements]);
 
+    // Type 2 stores P&L as flat current-year values only (no previous-year column).
+    // P&L-based fallback is therefore unavailable; brought-forward relies on prior CT filing or manual entry.
+    const getPnlPreviousYearLoss = useCallback((): number => 0, []);
+
     const previousYearLossFetchedRef = useRef(false);
     useEffect(() => {
         if (previousYearLossFetchedRef.current) return;
@@ -3164,13 +3168,35 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                 );
                 setPreviousYearLossLoadStatus('loaded');
             } else {
-                setPreviousYearLossLoadStatus('no_prior');
+                const pnlLoss = getPnlPreviousYearLoss();
+                if (pnlLoss > 0) {
+                    setTaxLossesSchedule(prev => ({
+                        ...prev,
+                        broughtForward: pnlLoss,
+                        broughtForwardManuallyOverridden: false,
+                    }));
+                    setPreviousYearLossHint(`Loaded ${pnlLoss.toLocaleString()} AED from P&L previous-year loss.`);
+                    setPreviousYearLossLoadStatus('loaded');
+                } else {
+                    setPreviousYearLossLoadStatus('no_prior');
+                }
             }
         }).catch(err => {
             console.error('Failed to fetch previous year loss:', err);
-            setPreviousYearLossLoadStatus('no_prior');
+            const pnlLoss = getPnlPreviousYearLoss();
+            if (pnlLoss > 0) {
+                setTaxLossesSchedule(prev => ({
+                    ...prev,
+                    broughtForward: pnlLoss,
+                    broughtForwardManuallyOverridden: false,
+                }));
+                setPreviousYearLossHint(`Loaded ${pnlLoss.toLocaleString()} AED from P&L previous-year loss.`);
+                setPreviousYearLossLoadStatus('loaded');
+            } else {
+                setPreviousYearLossLoadStatus('no_prior');
+            }
         });
-    }, [customerId, periodId, taxLossesSchedule.broughtForwardManuallyOverridden, previousYearLossLoadStatus]);
+    }, [customerId, periodId, taxLossesSchedule.broughtForwardManuallyOverridden, previousYearLossLoadStatus, getPnlPreviousYearLoss]);
 
     const handleAutoLoadPreviousYearLoss = useCallback(async () => {
         if (!customerId || !periodId) return;
@@ -3189,14 +3215,24 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                         : `Loaded ${res.broughtForward.toLocaleString()} AED from prior filing.`
                 );
                 setPreviousYearLossLoadStatus('loaded');
-            } else {
-                setPreviousYearLossLoadStatus('no_prior');
+                return;
             }
         } catch (e) {
-            console.error('Auto-load failed:', e);
+            console.error('Auto-load (prior filing) failed:', e);
+        }
+        const pnlLoss = getPnlPreviousYearLoss();
+        if (pnlLoss > 0) {
+            setTaxLossesSchedule(prev => ({
+                ...prev,
+                broughtForward: pnlLoss,
+                broughtForwardManuallyOverridden: false,
+            }));
+            setPreviousYearLossHint(`Loaded ${pnlLoss.toLocaleString()} AED from P&L previous-year loss.`);
+            setPreviousYearLossLoadStatus('loaded');
+        } else {
             setPreviousYearLossLoadStatus('no_prior');
         }
-    }, [customerId, periodId]);
+    }, [customerId, periodId, getPnlPreviousYearLoss]);
 
     const handleContinueToSignedFsLouUpload = useCallback(async () => {
         await handleSaveStep(13);

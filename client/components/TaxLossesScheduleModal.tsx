@@ -13,6 +13,7 @@ export interface TaxLossesSchedule {
     otherAdjustmentsDecrease: number;
     carriedForwardAvailable: number;
     broughtForwardManuallyOverridden?: boolean;
+    incurredCurrentPeriodManuallyOverridden?: boolean;
 }
 
 export const DEFAULT_TAX_LOSSES_SCHEDULE: TaxLossesSchedule = {
@@ -26,6 +27,7 @@ export const DEFAULT_TAX_LOSSES_SCHEDULE: TaxLossesSchedule = {
     otherAdjustmentsDecrease: 0,
     carriedForwardAvailable: 0,
     broughtForwardManuallyOverridden: false,
+    incurredCurrentPeriodManuallyOverridden: false,
 };
 
 /**
@@ -53,10 +55,13 @@ export const computeTaxLossesSchedule = (
     const otherAdjustmentsIncrease = toInt(schedule.otherAdjustmentsIncrease);
     const otherAdjustmentsDecrease = toInt(schedule.otherAdjustmentsDecrease);
 
-    // If current period is itself a loss, log it as "incurred" (positive number)
-    const incurredCurrentPeriod = taxableIncomeBeforeAdj < 0
+    // Incurred = manual override if set, else auto-derive from negative Q19
+    const autoIncurred = taxableIncomeBeforeAdj < 0
         ? Math.abs(toInt(taxableIncomeBeforeAdj))
         : 0;
+    const incurredCurrentPeriod = schedule.incurredCurrentPeriodManuallyOverridden
+        ? toInt(schedule.incurredCurrentPeriod)
+        : autoIncurred;
 
     const currentProfit = Math.max(0, toInt(taxableIncomeBeforeAdj));
 
@@ -88,6 +93,7 @@ export const computeTaxLossesSchedule = (
         otherAdjustmentsDecrease,
         carriedForwardAvailable,
         broughtForwardManuallyOverridden: schedule.broughtForwardManuallyOverridden,
+        incurredCurrentPeriodManuallyOverridden: schedule.incurredCurrentPeriodManuallyOverridden,
     };
 };
 
@@ -131,6 +137,9 @@ export const TaxLossesScheduleModal: React.FC<Props> = ({
         if (key === 'broughtForward') {
             next.broughtForwardManuallyOverridden = true;
         }
+        if (key === 'incurredCurrentPeriod') {
+            next.incurredCurrentPeriodManuallyOverridden = true;
+        }
         // Recompute derived fields
         onChange(computeTaxLossesSchedule(next, taxableIncomeBeforeAdj));
     };
@@ -143,8 +152,8 @@ export const TaxLossesScheduleModal: React.FC<Props> = ({
         editable: boolean;
         info?: string;
     }> = [
-        { label: 'Tax Losses brought forward', key: 'broughtForward', editable: true, info: 'Carried forward from prior tax periods' },
-        { label: 'Tax Losses incurred during the Tax Period', key: 'incurredCurrentPeriod', editable: false, info: 'Auto-calculated when current period is a loss' },
+        { label: 'Tax Losses brought forward', key: 'broughtForward', editable: true, info: 'Carried forward from prior tax periods (auto-loaded from prior CT filing or P&L previous-year loss)' },
+        { label: 'Tax Losses incurred during the Tax Period', key: 'incurredCurrentPeriod', editable: true, info: 'Pre-fills with absolute value of negative Q19; you can override' },
         { label: 'Tax Losses received due to Business Restructuring Relief', key: 'receivedFromRestructuring', editable: true },
         { label: 'Tax Losses transferred due to Business Restructuring Relief', key: 'transferredFromRestructuring', editable: true },
         { label: 'Tax Losses limited (change in ownership / business activity)', key: 'limitedDueToOwnershipChange', editable: true },
