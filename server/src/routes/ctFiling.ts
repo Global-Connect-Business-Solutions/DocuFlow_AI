@@ -2849,8 +2849,18 @@ router.post("/download-lou-pdf", requireAuth, requirePermission(["projects:view"
 
 
     // Content - substitute {{REVENUE}} placeholder and render **bold** segments
-    const revenueDisplay = (revenue && String(revenue).trim()) || '_______';
-    const renderedContent = String(content || '').replace(/\{\{REVENUE\}\}/g, revenueDisplay);
+    const revenueRaw = String(revenue || '').trim();
+    const revenueNumeric = revenueRaw === '' ? NaN : Number(revenueRaw.replace(/,/g, ''));
+    const revenueIsZero = Number.isFinite(revenueNumeric) && revenueNumeric === 0;
+    const revenueDisplay = revenueRaw || '_______';
+    let renderedContent = String(content || '');
+    if (revenueIsZero) {
+      // When revenue is zero, "AED 0" reads awkwardly — collapse "AED **{{REVENUE}}**" to "**Nil**".
+      renderedContent = renderedContent
+        .replace(/AED\s*\*\*\{\{REVENUE\}\}\*\*/g, '**Nil**')
+        .replace(/AED\s*\{\{REVENUE\}\}/g, 'Nil');
+    }
+    renderedContent = renderedContent.replace(/\{\{REVENUE\}\}/g, revenueDisplay);
 
     const parseBoldSegments = (paragraph: string): Array<{ text: string; bold: boolean }> => {
       const out: Array<{ text: string; bold: boolean }> = [];
