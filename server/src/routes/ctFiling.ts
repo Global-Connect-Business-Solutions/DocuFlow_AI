@@ -515,6 +515,7 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
     authorizedSignatoryName,
     taxComputationRows,
     taxApplicable,
+    taxLossesSchedule,
     sbrClaimed,
     fixedAssetData,
     intangibleAssetData,
@@ -666,6 +667,8 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
     let directorsPageNum = 0;
     let taxCompPageNum = 0;
     let taxCompEndPageNum = 0;
+    let taxLossesSchedulePageNum = 0;
+    let taxLossesScheduleEndPageNum = 0;
     let pnlPageNum = 0;
     let bsPageNum = 0;
     let bsEndPageNum = 0;
@@ -962,10 +965,22 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
     };
     const corporateTaxLiabilityValue = findTaxRowValue(24, "corporate tax liability");
     const corporateTaxPayableValue = findTaxRowValue(26, "corporate tax payable");
+    // Detect a meaningful Tax Losses Schedule. When losses are set off against the
+    // current period profit and bring taxable income below the 375K threshold, the
+    // final liability is 0 — but the computation page must still render so the
+    // reader can see why no tax is due.
+    const taxLossesScheduleObj: any = taxLossesSchedule || {};
+    const hasMeaningfulTaxLossesSchedule = [
+      'broughtForward', 'incurredCurrentPeriod', 'receivedFromRestructuring',
+      'transferredFromRestructuring', 'limitedDueToOwnershipChange', 'utilisedCurrentPeriod',
+      'otherAdjustmentsIncrease', 'otherAdjustmentsDecrease', 'carriedForwardAvailable'
+    ].some((k) => Math.abs(Number(taxLossesScheduleObj[k]) || 0) > 0);
     // Business rule:
-    // - SBR claimed => do not show tax computation page
-    // - taxApplicable=false => do not show tax computation page
-    // - Otherwise show only when row 24 or 26 has a value
+    // - SBR claimed => never show tax computation page
+    // - Otherwise show when row 24/26 has a value AND taxApplicable, OR when a
+    //   tax losses schedule exists (set-off may bring final tax to 0 even though
+    //   the company had profit — the page is still needed to explain why no tax
+    //   is due, so schedule presence overrides the taxApplicable gate).
     const isSbrClaimed = String(sbrClaimed || "").toLowerCase() === "true" || sbrClaimed === true;
     const isTaxApplicable =
       taxApplicable === undefined || taxApplicable === null
@@ -973,9 +988,11 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
         : (String(taxApplicable).toLowerCase() === "true" || taxApplicable === true);
     const shouldRenderTaxComputationPage =
       !isSbrClaimed &&
-      isTaxApplicable &&
       normalizeTaxRows.length > 0 &&
-      (Math.abs(corporateTaxLiabilityValue) > 0 || Math.abs(corporateTaxPayableValue) > 0);
+      (
+        hasMeaningfulTaxLossesSchedule
+        || (isTaxApplicable && (Math.abs(corporateTaxLiabilityValue) > 0 || Math.abs(corporateTaxPayableValue) > 0))
+      );
     const hasMeaningfulAmount = (value: any) => {
       const num = Number(value);
       return Number.isFinite(num) && Math.abs(num) > 0;
@@ -1467,6 +1484,107 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
 
       drawTaxFooter();
       taxCompEndPageNum = taxCompPageNum;
+    }
+
+    // --- TAX LOSSES SCHEDULE PAGE ---
+    // Rendered immediately after the Tax Computation page when the schedule has any
+    // non-zero values (FTA Article 37 detail). Skipped under SBR.
+    const tlsToInt = (v: any) => Math.round(Number(v) || 0);
+    const tlsRows: Array<{ label: string; value: number; isKey?: boolean }> = [
+      { label: 'Tax Losses brought forward', value: tlsToInt(taxLossesScheduleObj.broughtForward) },
+      { label: 'Tax Losses incurred during the Tax Period', value: tlsToInt(taxLossesScheduleObj.incurredCurrentPeriod) },
+      { label: 'Tax Losses received due to Business Restructuring Relief', value: tlsToInt(taxLossesScheduleObj.receivedFromRestructuring) },
+      { label: 'Tax Losses transferred due to Business Restructuring Relief', value: tlsToInt(taxLossesScheduleObj.transferredFromRestructuring) },
+      { label: 'Tax Losses limited (change in ownership / business activity)', value: tlsToInt(taxLossesScheduleObj.limitedDueToOwnershipChange) },
+      { label: 'Tax Losses utilised in current Tax Period', value: tlsToInt(taxLossesScheduleObj.utilisedCurrentPeriod), isKey: true },
+      { label: 'Other adjustments which increase the Tax Losses', value: tlsToInt(taxLossesScheduleObj.otherAdjustmentsIncrease) },
+      { label: 'Other adjustments which decrease the Tax Losses', value: tlsToInt(taxLossesScheduleObj.otherAdjustmentsDecrease) },
+      { label: 'Tax Losses carried forward (available for transfer)', value: tlsToInt(taxLossesScheduleObj.carriedForwardAvailable), isKey: true }
+    ];
+
+    if (hasMeaningfulTaxLossesSchedule && !isSbrClaimed) {
+      const tlsTableX = 50;
+      const tlsDescWidth = 360;
+      const tlsAmountWidth = 135;
+      const tlsTableTopY = 208;
+      const tlsCellPaddingX = 6;
+      const tlsHeaderHeight = 16;
+      const tlsItemRowHeight = 16;
+      const tlsTableHeaderFont = 10;
+      const tlsItemFont = 10;
+      const tlsTableRight = tlsTableX + tlsDescWidth + tlsAmountWidth;
+
+      doc.addPage();
+      taxLossesSchedulePageNum = doc.bufferedPageRange().count;
+      const tlsContentY = drawStandardPageHeader('Tax Losses Schedule', `as at ${descriptiveEndDate}`);
+
+      doc.fontSize(taxPdfFontSize).font(taxPdfFont).fillColor('#000000').text(
+        `FTA Article 37 — Set-off of prior-year losses against current period profit (max 75%) for the period ${periodStartForDirectorReport} to ${periodEndForDirectorReport}.`,
+        50,
+        tlsContentY + 4,
+        { width: 500 }
+      );
+
+      const tlsHeaderY = tlsTableTopY;
+
+      // Header row
+      doc.rect(tlsTableX, tlsHeaderY, tlsDescWidth + tlsAmountWidth, tlsHeaderHeight).fill('#e8e8e8');
+      doc.moveTo(tlsTableX, tlsHeaderY).lineTo(tlsTableRight, tlsHeaderY).lineWidth(1).strokeColor('#000000').stroke();
+      doc.moveTo(tlsTableX, tlsHeaderY + tlsHeaderHeight).lineTo(tlsTableRight, tlsHeaderY + tlsHeaderHeight).lineWidth(1).strokeColor('#000000').stroke();
+      doc.fontSize(tlsTableHeaderFont).font(taxPdfFontBold).fillColor('#000000');
+      const tlsHeaderTextY = tlsHeaderY + Math.max(3, Math.floor((tlsHeaderHeight - 10) / 2));
+      doc.text('Description', tlsTableX + tlsCellPaddingX, tlsHeaderTextY, { width: tlsDescWidth - (tlsCellPaddingX * 2), align: 'left', lineBreak: false });
+      doc.text('Amount (AED)', tlsTableX + tlsDescWidth + tlsCellPaddingX, tlsHeaderTextY, { width: tlsAmountWidth - (tlsCellPaddingX * 2), align: 'right', lineBreak: false });
+
+      let tlsRowY = tlsHeaderY + tlsHeaderHeight;
+      tlsRows.forEach((row, idx) => {
+        const isLast = idx === tlsRows.length - 1;
+        doc.moveTo(tlsTableX, tlsRowY + tlsItemRowHeight)
+          .lineTo(tlsTableRight, tlsRowY + tlsItemRowHeight)
+          .lineWidth(0.3)
+          .strokeColor('#dddddd')
+          .stroke();
+        doc.fontSize(tlsItemFont).font(row.isKey ? taxPdfFontBold : taxPdfFont).fillColor('#000000');
+        const tlsTextY = tlsRowY + Math.max(1, Math.floor((tlsItemRowHeight - 10) / 2));
+        const tlsItemIndent = row.isKey ? 0 : 12;
+        doc.text(row.label, tlsTableX + tlsCellPaddingX + tlsItemIndent, tlsTextY, {
+          width: tlsDescWidth - (tlsCellPaddingX * 2) - tlsItemIndent,
+          align: 'left',
+          lineBreak: false
+        });
+        doc.text(formatPdfAmount(row.value), tlsTableX + tlsDescWidth + tlsCellPaddingX, tlsTextY, {
+          width: tlsAmountWidth - (tlsCellPaddingX * 2),
+          align: 'right',
+          lineBreak: false
+        });
+
+        // Bold underline above key rows (utilised in current period, carried forward)
+        if (row.isKey) {
+          const lineStartX = tlsTableX + tlsDescWidth + 8;
+          const lineEndX = tlsTableRight - 8;
+          doc.moveTo(lineStartX, tlsRowY).lineTo(lineEndX, tlsRowY).lineWidth(1).strokeColor('#000000').stroke();
+        }
+
+        // Double underline beneath the last row
+        if (isLast) {
+          const ul1 = tlsRowY + tlsItemRowHeight + 2;
+          const ul2 = ul1 + 3;
+          const dblLineStartX = tlsTableX + tlsDescWidth + 8;
+          const dblLineEndX = tlsTableRight - 8;
+          doc.moveTo(dblLineStartX, ul1).lineTo(dblLineEndX, ul1).lineWidth(1).strokeColor('#000000').stroke();
+          doc.moveTo(dblLineStartX, ul2).lineTo(dblLineEndX, ul2).lineWidth(1).strokeColor('#000000').stroke();
+        }
+
+        tlsRowY += tlsItemRowHeight;
+      });
+
+      // Footer (Board of Directors signature block)
+      doc.fontSize(taxPdfFontSize).font(taxPdfFont).fillColor('#000000').text('By order of the Board of Directors', 50, doc.page.height - 170);
+      doc.fontSize(taxPdfFontSize).font(taxPdfFont).text('Managing Director', 50, doc.page.height - 118);
+      doc.fontSize(taxPdfFontSize).font(taxPdfFont).text((companyName || 'COMPANY NAME').toUpperCase(), 50, doc.page.height - 98);
+      doc.fontSize(taxPdfFontSize).font(taxPdfFont).text(toSentenceCase(resolvedLocation), 50, doc.page.height - 78);
+
+      taxLossesScheduleEndPageNum = taxLossesSchedulePageNum;
     }
 
     // --- PAGE 4: BALANCE SHEET (Statement of Financial Position) ---
@@ -2636,6 +2754,9 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
 
     addTocItem("Director's Report", directorsPageNum, taxCompPageNum ? (taxCompPageNum - 1) : (bsPageNum ? (bsPageNum - 1) : directorsPageNum));
     addTocItem('Corporate Tax Computation Report', taxCompPageNum, taxCompEndPageNum);
+    if (taxLossesSchedulePageNum) {
+      addTocItem('Tax Losses Schedule', taxLossesSchedulePageNum, taxLossesScheduleEndPageNum);
+    }
     addTocItem('Statement of Financial Position', bsPageNum, bsEndPageNum);
     addTocItem('Statement of Comprehensive Income', pnlPageNum, pnlEndPageNum);
     addTocItem('Statement of Changes in Equity', equityPageNum, equityEndPageNum);

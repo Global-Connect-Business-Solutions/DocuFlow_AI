@@ -1366,7 +1366,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
     const [showTaxPdfSignatoryModal, setShowTaxPdfSignatoryModal] = useState(false);
     const [taxPdfSignatoryName, setTaxPdfSignatoryName] = useState('');
     const [taxPdfFinalReturn, setTaxPdfFinalReturn] = useState(false);
-    const [pendingTaxPdfRequest, setPendingTaxPdfRequest] = useState<{ rows: Array<{ label: string; value: number }>; taxApplicable: boolean } | null>(null);
+    const [pendingTaxPdfRequest, setPendingTaxPdfRequest] = useState<{ rows: Array<{ label: string; value: number }>; taxApplicable: boolean; taxLossesSchedule?: TaxLossesSchedule } | null>(null);
     const [showPdfPreview, setShowPdfPreview] = useState(false);
     const [previewPdfBlob, setPreviewPdfBlob] = useState<Blob | null>(null);
     const [previewPdfFileName, setPreviewPdfFileName] = useState('');
@@ -4278,7 +4278,8 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
         authorizedSignatoryName?: string,
         taxComputationRows?: Array<{ label: string; value: number }>,
         taxApplicable?: boolean,
-        isFinalReturn: boolean = false
+        isFinalReturn: boolean = false,
+        taxLossesScheduleArg?: TaxLossesSchedule
     ) => {
         setIsDownloadingPdf(true);
         try {
@@ -4372,6 +4373,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                 intangibleAssetData,
                 taxComputationRows,
                 taxApplicable,
+                taxLossesSchedule: taxLossesScheduleArg,
                 sbrClaimed: questionnaireAnswers[6] === 'Yes',
                 isFinalReturn
             });
@@ -8389,7 +8391,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                     value: Number(mergedTaxData[f.field]) || 0
                 }));
             const taxApplicable = (Number(mergedTaxData.corporateTaxLiability) || 0) > 0 || (Number(mergedTaxData.corporateTaxPayable) || 0) > 0;
-            setPendingTaxPdfRequest({ rows, taxApplicable });
+            setPendingTaxPdfRequest({ rows, taxApplicable, taxLossesSchedule: computedSchedule });
             setTaxPdfSignatoryName('');
             setTaxPdfFinalReturn(false);
             setShowTaxPdfSignatoryModal(true);
@@ -8403,7 +8405,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
             setPendingTaxPdfRequest(null);
             setTaxPdfSignatoryName('');
             setTaxPdfFinalReturn(false);
-            await handleDownloadFinancialStatementsPDF(normalizedName || undefined, payload.rows, payload.taxApplicable, isFinalReturn);
+            await handleDownloadFinancialStatementsPDF(normalizedName || undefined, payload.rows, payload.taxApplicable, isFinalReturn, payload.taxLossesSchedule);
         };
 
         return (
