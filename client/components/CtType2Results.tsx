@@ -8451,30 +8451,64 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
 
                                 const currentValue = computedTaxData[f.field] ?? 0;
                                 const isTaxLossesUtilised = f.field === 'taxLossesUtilised';
+                                const isBreakdownTrigger = f.field === 'taxableIncomeTaxPeriod';
+                                const breakdownIncome = Math.max(0, Number(computedTaxData.taxableIncomeTaxPeriod) || 0);
+                                const breakdownBalance = Math.max(0, breakdownIncome - 375000);
                                 return (
-                                    <div key={f.field} className={`flex justify-between items-center p-4 bg-muted/20 rounded-xl border border-border/50 ${f.highlight ? 'bg-primary/5 border-primary/20 ring-1 ring-primary/10' : ''}`}>
-                                        <span className={`text-xs font-bold text-muted-foreground uppercase tracking-tight ${f.highlight ? 'text-primary' : ''}`}>{f.label}</span>
-                                        <div className="flex items-center gap-2">
-                                            {isTaxLossesUtilised && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowTaxLossesScheduleModal(true)}
-                                                    className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
-                                                    title="Edit Tax Losses Schedule"
-                                                >
-                                                    Edit Schedule
-                                                </button>
-                                            )}
-                                            <input
-                                                type="number"
-                                                value={currentValue}
-                                                disabled={isTaxLossesUtilised}
-                                                onChange={(e) => setTaxComputationEdits(prev => ({ ...prev, [f.field]: Math.round(parseFloat(e.target.value) || 0) }))}
-                                                className={`font-mono font-bold text-base text-right bg-transparent border-b border-transparent hover:border-border focus:border-primary outline-none transition-all w-48 ${f.highlight ? 'text-primary' : 'text-foreground'} ${isTaxLossesUtilised ? 'cursor-not-allowed opacity-80' : ''}`}
-                                            />
-                                            <span className="text-[10px] opacity-60 ml-0.5">{currency}</span>
+                                    <React.Fragment key={f.field}>
+                                        <div className={`flex justify-between items-center p-4 bg-muted/20 rounded-xl border border-border/50 ${f.highlight ? 'bg-primary/5 border-primary/20 ring-1 ring-primary/10' : ''}`}>
+                                            <span className={`text-xs font-bold text-muted-foreground uppercase tracking-tight ${f.highlight ? 'text-primary' : ''}`}>{f.label}</span>
+                                            <div className="flex items-center gap-2">
+                                                {isTaxLossesUtilised && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowTaxLossesScheduleModal(true)}
+                                                        className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
+                                                        title="Edit Tax Losses Schedule"
+                                                    >
+                                                        Edit Schedule
+                                                    </button>
+                                                )}
+                                                <input
+                                                    type="number"
+                                                    value={currentValue}
+                                                    disabled={isTaxLossesUtilised}
+                                                    onChange={(e) => setTaxComputationEdits(prev => ({ ...prev, [f.field]: Math.round(parseFloat(e.target.value) || 0) }))}
+                                                    className={`font-mono font-bold text-base text-right bg-transparent border-b border-transparent hover:border-border focus:border-primary outline-none transition-all w-48 ${f.highlight ? 'text-primary' : 'text-foreground'} ${isTaxLossesUtilised ? 'cursor-not-allowed opacity-80' : ''}`}
+                                                />
+                                                <span className="text-[10px] opacity-60 ml-0.5">{currency}</span>
+                                            </div>
                                         </div>
-                                    </div>
+                                        {isBreakdownTrigger && (
+                                            <>
+                                                <div className="flex justify-between items-center px-4 py-2.5 ml-6 border-l-2 border-primary/20">
+                                                    <span className="text-xs font-medium text-muted-foreground tracking-tight">Tax Upto 375,000 AED (Nil Rate)</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-mono font-semibold text-sm text-right w-48 text-muted-foreground">- NIL -</span>
+                                                        <span className="text-[10px] opacity-60 ml-0.5">{currency}</span>
+                                                    </div>
+                                                </div>
+                                                {breakdownBalance > 0 && (
+                                                    <>
+                                                        <div className="flex justify-between items-center px-4 py-2.5 ml-6 border-l-2 border-primary/20">
+                                                            <span className="text-xs font-medium text-muted-foreground tracking-tight">Balance Taxable Income Above AED 375,000</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-mono font-semibold text-sm text-right w-48 text-foreground">{breakdownBalance.toLocaleString('en-US')}</span>
+                                                                <span className="text-[10px] opacity-60 ml-0.5">{currency}</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex justify-between items-center px-4 py-2.5 ml-6 border-l-2 border-primary/20">
+                                                            <span className="text-xs font-medium text-muted-foreground tracking-tight">Tax @ 9% of {breakdownBalance.toLocaleString('en-US')} (AED)</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-mono font-semibold text-sm text-right w-48 text-foreground">{Math.round(breakdownBalance * 0.09).toLocaleString('en-US')}</span>
+                                                                <span className="text-[10px] opacity-60 ml-0.5">{currency}</span>
+                                                            </div>
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </>
+                                        )}
+                                    </React.Fragment>
                                 );
                             })}
                         </div>
