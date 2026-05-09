@@ -57,6 +57,7 @@ import { LoadingIndicator } from './LoadingIndicator';
 import { WorkingNotesModal } from './WorkingNotesModal';
 import { extractPreviousYearCorporateTaxFromTrialBalance, isCorporateTaxExpenseLikeLabel } from '../utils/ctTrialBalanceTax';
 import { TaxLossesScheduleModal, computeTaxLossesSchedule, DEFAULT_TAX_LOSSES_SCHEDULE, type TaxLossesSchedule } from './TaxLossesScheduleModal';
+import { findFinalReturnViolations, type FinalReturnViolation } from '../utils/finalReturnValidation';
 
 
 const CT_REPORTS_ACCOUNTS: Record<string, string> = {
@@ -1276,6 +1277,7 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
     const [taxPdfSignatoryName, setTaxPdfSignatoryName] = useState('');
     const [taxPdfFinalReturn, setTaxPdfFinalReturn] = useState(false);
     const [pendingTaxPdfRequest, setPendingTaxPdfRequest] = useState<{ rows: Array<{ label: string; value: number }>; taxApplicable: boolean; taxLossesSchedule?: TaxLossesSchedule } | null>(null);
+    const [finalReturnViolations, setFinalReturnViolations] = useState<FinalReturnViolation[]>([]);
     const [showPdfPreview, setShowPdfPreview] = useState(false);
     const [previewPdfBlob, setPreviewPdfBlob] = useState<Blob | null>(null);
     const [previewPdfFileName, setPreviewPdfFileName] = useState('');
@@ -8119,9 +8121,16 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
         };
         const handleConfirmTaxPdfDownload = async (withoutName = false) => {
             if (!pendingTaxPdfRequest) return;
+            const isFinalReturn = taxPdfFinalReturn;
+            if (isFinalReturn) {
+                const violations = findFinalReturnViolations(bsStructure as any, balanceSheetValues as any);
+                if (violations.length > 0) {
+                    setFinalReturnViolations(violations);
+                    return;
+                }
+            }
             const payload = pendingTaxPdfRequest;
             const normalizedName = withoutName ? '' : taxPdfSignatoryName.trim();
-            const isFinalReturn = taxPdfFinalReturn;
             setShowTaxPdfSignatoryModal(false);
             setPendingTaxPdfRequest(null);
             setTaxPdfSignatoryName('');
@@ -8337,6 +8346,50 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                                     className="px-5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-lg text-sm transition-colors shadow-lg"
                                 >
                                     Download PDF
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                {finalReturnViolations.length > 0 && (
+                    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
+                        <div className="bg-card rounded-xl border border-status-danger shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                            <div className="p-5 border-b border-border bg-status-danger-soft flex justify-between items-center">
+                                <h3 className="text-lg font-bold text-status-danger">Final Return — Non-zero Assets / Liabilities</h3>
+                                <button
+                                    onClick={() => setFinalReturnViolations([])}
+                                    className="text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                    <XMarkIcon className="w-5 h-5" />
+                                </button>
+                            </div>
+                            <div className="p-5 space-y-3">
+                                <p className="text-sm text-foreground">
+                                    A Final Return requires all assets and liabilities to be zero (the company is deregistering and should hold no balances). The following items still have values:
+                                </p>
+                                <div className="max-h-64 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                                    {finalReturnViolations.map((v) => (
+                                        <div key={v.id} className="flex justify-between items-center px-3 py-2 text-xs">
+                                            <span className="flex items-center gap-2">
+                                                <span className={`px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${v.section === 'asset' ? 'bg-primary/10 text-primary' : 'bg-status-warning-soft text-status-warning'}`}>
+                                                    {v.section}
+                                                </span>
+                                                <span className="text-foreground">{v.label}</span>
+                                            </span>
+                                            <span className="font-mono font-bold text-foreground">{v.currentYear.toLocaleString('en-US')} {currency}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Go back to the Balance Sheet step to clear these values, or uncheck Final Return if this is not a deregistration filing.
+                                </p>
+                            </div>
+                            <div className="p-4 border-t border-border bg-muted/50 flex justify-end">
+                                <button
+                                    onClick={() => setFinalReturnViolations([])}
+                                    className="px-5 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-lg text-sm transition-colors shadow-lg"
+                                >
+                                    Close
                                 </button>
                             </div>
                         </div>
