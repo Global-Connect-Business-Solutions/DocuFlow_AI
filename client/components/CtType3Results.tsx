@@ -217,7 +217,22 @@ type TbCoaCustomTarget = {
     name: string;
     category: string;
     subCategory?: string;
+    // When the target represents an existing Balance Sheet / P&L line item
+    // (picked from STATEMENT_GROUPING_TARGETS), the corresponding row id is
+    // stored here so mapping bypasses keyword routing and goes straight to
+    // the linked statement line — no separate custom_xxx row is created.
+    bsId?: string;
+    pnlId?: string;
 };
+
+type StatementTargetMeta = {
+    category: string;
+    subCategory?: string;
+    bsId?: string;
+    pnlId?: string;
+};
+
+type TbCoaTargetSelectionMeta = StatementTargetMeta | null;
 
 type TbCoaCustomTargetDialogState = {
     category: string;
@@ -443,6 +458,11 @@ const injectCustomItemsIntoBsStructure = (
     };
     const result = [...structure];
     for (const target of [...customTargets].reverse()) {
+        // Targets that link to an existing BS row don't need a synthetic
+        // custom_xxx row — values flow straight into the linked row.
+        if (target.bsId) continue;
+        // P&L-linked targets never produce BS rows.
+        if (target.pnlId) continue;
         const id = customBsId(target.name);
         if (result.some(item => item.id === id)) continue;
         const idx = result.findIndex(item => item.id === getInsertBeforeId(target.category, target.subCategory));
@@ -525,6 +545,185 @@ const TB_COA_GROUP_PARENT_TARGETS = (() => {
 const TB_COA_GROUP_ACCOUNT_LOOKUP: Record<string, AccountLookupEntry> = {
     ...ACCOUNT_LOOKUP,
     ...TB_COA_GROUP_PARENT_TARGETS.lookup
+};
+
+// The "Group to COA" picker now mirrors the actual Balance Sheet / P&L line
+// items (BS_ITEMS / PNL_ITEMS) instead of the granular CHART_OF_ACCOUNTS, so
+// only accounts that exist downstream appear as grouping targets. Structure
+// matches CHART_OF_ACCOUNTS so the existing parent-target / sub-category /
+// "Add Custom Account" plumbing keeps working unchanged.
+const STATEMENT_GROUPING_TARGETS: Record<string, string[] | Record<string, string[]>> = {
+    Assets: {
+        CurrentAssets: [
+            'Cash and bank balances',
+            'Inventories',
+            'Trade receivables',
+            'Advances, deposits and other receivables',
+            'Related party transactions',
+        ],
+        NonCurrentAssets: [
+            'Property, plant and equipment',
+            'Intangible assets',
+            'Long-term investments',
+            'Other non-current assets',
+        ],
+    },
+    Liabilities: {
+        CurrentLiabilities: [
+            'Short term borrowings',
+            'Related party transactions',
+            'Trade and other payables',
+        ],
+        NonCurrentLiabilities: [
+            "Employees' end of service benefits",
+            'Bank borrowings - non current portion',
+        ],
+    },
+    Equity: [
+        'Share capital',
+        'Statutory reserve',
+        'Retained earnings',
+        "Shareholders' current accounts",
+    ],
+    Income: {
+        OperatingIncome: [
+            'Revenue',
+        ],
+        OtherIncome: [
+            'Other income',
+            'Unrealised gain/(loss) on investments at fair value through profit or loss (FVTPL)',
+            'Share of profits of associates',
+            'Gain/(loss) on revaluation of investment property',
+            'Gain on revaluation of property',
+            'Share of gain/(loss) on property revaluation of associates',
+            'Changes in fair value of available-for-sale investments',
+            'Changes in fair value of available-for-sale investments reclassified to profit or loss',
+            'Exchange difference on translating foreign operation',
+        ],
+    },
+    Expenses: {
+        DirectCosts: [
+            'Cost of revenue',
+        ],
+        OtherExpenses: [
+            'Impairment losses on property, plant and equipment',
+            'Impairment losses on intangible assets',
+            'Business Promotion & Selling Expenses',
+            'Foreign Exchange Loss',
+            'Selling and distribution expenses',
+            'Salaries, wages and related charges',
+            'Administrative expenses',
+            'Finance costs',
+            'Depreciation on property, plant and equipment',
+            'Provisions for corporate tax',
+        ],
+    },
+};
+
+// Maps a picker label (composed with section context to disambiguate
+// "Related party transactions" which appears under both Assets and
+// Liabilities) to the corresponding BS/PnL row id.
+const STATEMENT_TARGET_LOOKUP: Record<string, StatementTargetMeta> = (() => {
+    const labelToBsId: Record<string, string> = {
+        'cash and bank balances': 'cash_bank_balances',
+        'inventories': 'inventories',
+        'trade receivables': 'trade_receivables',
+        'advances deposits and other receivables': 'advances_deposits_receivables',
+        'property plant and equipment': 'property_plant_equipment',
+        'intangible assets': 'intangible_assets',
+        'long term investments': 'long_term_investments',
+        'other non current assets': 'other_non_current_assets',
+        'short term borrowings': 'short_term_borrowings',
+        'trade and other payables': 'trade_other_payables',
+        'employees end of service benefits': 'employees_end_service_benefits',
+        'bank borrowings non current portion': 'bank_borrowings_non_current',
+        'share capital': 'share_capital',
+        'statutory reserve': 'statutory_reserve',
+        'retained earnings': 'retained_earnings',
+        'shareholders current accounts': 'shareholders_current_accounts',
+    };
+    const labelToPnlId: Record<string, string> = {
+        'revenue': 'revenue',
+        'cost of revenue': 'cost_of_revenue',
+        'unrealised gain loss on investments at fair value through profit or loss fvtpl': 'unrealised_gain_loss_fvtpl',
+        'share of profits of associates': 'share_profits_associates',
+        'gain loss on revaluation of investment property': 'gain_loss_revaluation_property',
+        'impairment losses on property plant and equipment': 'impairment_losses_ppe',
+        'impairment losses on intangible assets': 'impairment_losses_intangible',
+        'business promotion selling expenses': 'business_promotion_selling',
+        'foreign exchange loss': 'foreign_exchange_loss',
+        'selling and distribution expenses': 'selling_distribution_expenses',
+        'salaries wages and related charges': 'salaries_wages_charges',
+        'administrative expenses': 'administrative_expenses',
+        'finance costs': 'finance_costs',
+        'depreciation on property plant and equipment': 'depreciation_ppe',
+        'other income': 'other_income',
+        'gain on revaluation of property': 'gain_revaluation_property',
+        'share of gain loss on property revaluation of associates': 'share_gain_loss_revaluation_associates',
+        'changes in fair value of available for sale investments': 'changes_fair_value_available_sale',
+        'changes in fair value of available for sale investments reclassified to profit or loss': 'changes_fair_value_available_sale_reclassified',
+        'exchange difference on translating foreign operation': 'exchange_difference_translating',
+        'provisions for corporate tax': 'provisions_corporate_tax',
+    };
+
+    const lookup: Record<string, StatementTargetMeta> = {};
+    Object.entries(STATEMENT_GROUPING_TARGETS).forEach(([category, section]) => {
+        if (Array.isArray(section)) {
+            (section as string[]).forEach((label) => {
+                const key = normalizeAccountName(label);
+                const meta: StatementTargetMeta = { category };
+                if (labelToBsId[key]) meta.bsId = labelToBsId[key];
+                if (labelToPnlId[key]) meta.pnlId = labelToPnlId[key];
+                lookup[`${category}::::${key}`] = meta;
+                if (!lookup[key]) lookup[key] = meta;
+            });
+        } else {
+            Object.entries(section).forEach(([subCategory, accounts]) => {
+                (accounts as string[]).forEach((label) => {
+                    const key = normalizeAccountName(label);
+                    const meta: StatementTargetMeta = { category, subCategory };
+                    if (labelToBsId[key]) meta.bsId = labelToBsId[key];
+                    if (labelToPnlId[key]) meta.pnlId = labelToPnlId[key];
+                    lookup[`${category}::${subCategory}::${key}`] = meta;
+                    // Only register the section-less alias when not ambiguous —
+                    // "Related party transactions" appears in both Assets and
+                    // Liabilities, so leave the bare key unset for those.
+                    if (!lookup[key]) lookup[key] = meta;
+                });
+            });
+        }
+    });
+
+    // Side-aware bsId for "Related party transactions" (same label, two sections).
+    const rptKey = normalizeAccountName('Related party transactions');
+    if (lookup[`Assets::CurrentAssets::${rptKey}`]) {
+        lookup[`Assets::CurrentAssets::${rptKey}`].bsId = 'related_party_transactions_assets';
+    }
+    if (lookup[`Liabilities::CurrentLiabilities::${rptKey}`]) {
+        lookup[`Liabilities::CurrentLiabilities::${rptKey}`].bsId = 'related_party_transactions_liabilities';
+    }
+    // The bare-key alias for an ambiguous label is unsafe — drop it so callers
+    // are forced to disambiguate via the section-qualified key.
+    delete lookup[rptKey];
+
+    return lookup;
+})();
+
+const resolveStatementTargetMeta = (
+    name: string,
+    category?: string,
+    subCategory?: string
+): StatementTargetMeta | undefined => {
+    const key = normalizeAccountName(name);
+    if (category && subCategory) {
+        const hit = STATEMENT_TARGET_LOOKUP[`${category}::${subCategory}::${key}`];
+        if (hit) return hit;
+    }
+    if (category) {
+        const hit = STATEMENT_TARGET_LOOKUP[`${category}::::${key}`];
+        if (hit) return hit;
+    }
+    return STATEMENT_TARGET_LOOKUP[key];
 };
 
 const normalizeDebitCredit = (debitValue: number, creditValue: number) => {
@@ -1909,7 +2108,11 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
     const [tbSelectedAccountSections, setTbSelectedAccountSections] = useState<Record<string, string>>({});
     const [showTbCoaGroupModal, setShowTbCoaGroupModal] = useState(false);
     const [tbCoaSearch, setTbCoaSearch] = useState('');
-    const [tbCoaTargetAccount, setTbCoaTargetAccount] = useState<string>('Bank Accounts');
+    const [tbCoaTargetAccount, setTbCoaTargetAccount] = useState<string>('Cash and bank balances');
+    // Captures the section context (category/subCategory + bsId/pnlId) of the
+    // last picker selection. Needed because two BS rows share the label
+    // "Related party transactions" — the section disambiguates routing.
+    const [tbCoaTargetSelectionMeta, setTbCoaTargetSelectionMeta] = useState<TbCoaTargetSelectionMeta>(null);
     const [tbCoaCustomTargets, setTbCoaCustomTargets] = useState<TbCoaCustomTarget[]>([]);
     const [tbCoaCustomTargetDialog, setTbCoaCustomTargetDialog] = useState<TbCoaCustomTargetDialogState | null>(null);
     const [tbCoaCustomTargetDeleteDialog, setTbCoaCustomTargetDeleteDialog] = useState<TbCoaCustomTargetDeleteDialogState | null>(null);
@@ -2456,6 +2659,18 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                 }
             };
 
+            // P&L-linked picker target → route directly to the linked PNL row,
+            // bypassing keyword matching (and skip BS-linked targets here).
+            const customTarget = tbCoaCustomTargets.find(t => normalizeAccountName(t.name) === normalizedAccount);
+            if (customTarget?.pnlId) {
+                pushValue(customTarget.pnlId);
+                return;
+            }
+            if (customTarget?.bsId) {
+                // Statement-linked to a BS row — no P&L contribution.
+                return;
+            }
+
             // 1. Explicit subCategory mapping from CoA (highest priority)
             if (subCategory === 'OperatingIncome') {
                 pushValue('revenue');
@@ -2645,9 +2860,13 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
             // Custom COA target takes priority over keyword matching
             const customTarget = tbCoaCustomTargets.find(t => normalizeAccountName(t.name) === normalizedAccount);
             if (customTarget) {
+                // P&L-linked targets must not contribute to the Balance Sheet.
+                if (customTarget.pnlId) return;
                 const isLiabilityOrEquity = customTarget.category === 'Liabilities' || customTarget.category === 'Equity';
                 const val = isLiabilityOrEquity ? creditAmount - debitAmount : debitAmount - creditAmount;
-                pushValue(customBsId(customTarget.name), val);
+                // Statement-linked targets route directly to the existing BS row;
+                // free-form / parent targets fall through to the custom_xxx line.
+                pushValue(customTarget.bsId || customBsId(customTarget.name), val);
             } else if (coaMatch && (coaMatch.category === 'Liabilities' || coaMatch.category === 'Equity')) {
                 // Use COA metadata to route directly — bypasses keyword chain which can misfire
                 // e.g. "Advances from Customers" contains "advance" and would wrongly land on the Assets side
@@ -6498,6 +6717,7 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
             return;
         }
         setTbCoaSearch('');
+        setTbCoaTargetSelectionMeta(null);
         setShowTbCoaGroupModal(true);
     };
 
@@ -6569,29 +6789,49 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
 
         const normalizedTargetAccount = normalizeAccountName(targetAccount);
         const customTargetLookup = tbCoaCustomTargets.find(item => normalizeAccountName(item.name) === normalizedTargetAccount);
+        // Statement-line target picked from STATEMENT_GROUPING_TARGETS — uses the
+        // selection meta captured at click time so "Related party transactions"
+        // routes to the correct side (Assets vs Liabilities).
+        const statementMetaFromSelection = tbCoaTargetSelectionMeta
+            && normalizeAccountName(tbCoaTargetAccount) === normalizedTargetAccount
+            ? tbCoaTargetSelectionMeta
+            : undefined;
+        const statementMeta = statementMetaFromSelection
+            || resolveStatementTargetMeta(targetAccount);
         const targetLookup = TB_COA_GROUP_ACCOUNT_LOOKUP[normalizedTargetAccount]
+            || (statementMeta ? {
+                category: statementMeta.category,
+                subCategory: statementMeta.subCategory,
+                name: targetAccount
+            } : undefined)
             || (customTargetLookup ? {
                 category: customTargetLookup.category,
                 subCategory: customTargetLookup.subCategory,
                 name: customTargetLookup.name
             } : undefined);
 
-        // Auto-register the COA target as a dedicated BS line item so the grouped value
-        // gets its own row in the correct balance sheet section instead of being lumped
-        // into a generic bucket (e.g. trade_other_payables).
-        // Only applies to specific named COA accounts (in ACCOUNT_LOOKUP), not to generic
-        // parent targets like "Other Current Liabilities (Grouped)".
+        // Register the picked grouping target so subsequent BS/P&L mapping can route
+        // straight to the linked statement row (via bsId/pnlId) — or, for free-form
+        // / parent / catch-all targets, to a dedicated custom_xxx BS line.
+        // Targets that resolve to an existing statement line don't create a new
+        // custom_xxx row; injectCustomItemsIntoBsStructure skips them.
+        const isStatementLinkedTarget = !!(statementMeta && (statementMeta.bsId || statementMeta.pnlId));
         const isSpecificNamedCoaAccount = !!ACCOUNT_LOOKUP[normalizedTargetAccount];
         const isAlreadyCustomTarget = !!customTargetLookup;
-        if (isSpecificNamedCoaAccount && !isAlreadyCustomTarget && targetLookup?.category &&
-            targetLookup.category !== 'Income' && targetLookup.category !== 'Expenses') {
+        const shouldRegisterTarget = !isAlreadyCustomTarget && targetLookup?.category &&
+            (isStatementLinkedTarget || (isSpecificNamedCoaAccount &&
+                targetLookup.category !== 'Income' && targetLookup.category !== 'Expenses'));
+        if (shouldRegisterTarget) {
             setTbCoaCustomTargets(prev => {
                 if (prev.some(t => normalizeAccountName(t.name) === normalizedTargetAccount)) return prev;
-                return [...prev, {
+                const next: TbCoaCustomTarget = {
                     name: targetAccount,
-                    category: targetLookup.category,
-                    subCategory: targetLookup.subCategory
-                }];
+                    category: targetLookup!.category,
+                    subCategory: targetLookup!.subCategory
+                };
+                if (statementMeta?.bsId) next.bsId = statementMeta.bsId;
+                if (statementMeta?.pnlId) next.pnlId = statementMeta.pnlId;
+                return [...prev, next];
             });
         }
 
@@ -6671,14 +6911,28 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
         const existingBuiltIn = TB_COA_GROUP_ACCOUNT_LOOKUP[normalizedName];
         if (existingBuiltIn) {
             setTbCoaTargetAccount(existingBuiltIn.name);
+            setTbCoaTargetSelectionMeta(null);
             setTbCoaCustomTargetDialog(null);
             setExtractionAlert({ type: 'warning', message: `"${existingBuiltIn.name}" already exists in Chart of Accounts and has been selected.` });
+            return;
+        }
+
+        // Reject duplicates against the new statement-driven picker labels
+        // (BS/PnL line items shown by default in the modal). Look up
+        // section-aware first, then fall back to a section-less alias.
+        const existingStatementTarget = resolveStatementTargetMeta(name, category, subCategory);
+        if (existingStatementTarget) {
+            setTbCoaTargetAccount(name);
+            setTbCoaTargetSelectionMeta(existingStatementTarget);
+            setTbCoaCustomTargetDialog(null);
+            setExtractionAlert({ type: 'warning', message: `"${name}" already exists as a built-in statement line and has been selected.` });
             return;
         }
 
         const existingCustom = tbCoaCustomTargets.find(item => normalizeAccountName(item.name) === normalizedName);
         if (existingCustom) {
             setTbCoaTargetAccount(existingCustom.name);
+            setTbCoaTargetSelectionMeta(null);
             setTbCoaCustomTargetDialog(null);
             setExtractionAlert({ type: 'warning', message: `"${existingCustom.name}" already exists in custom targets and has been selected.` });
             return;
@@ -6686,6 +6940,7 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
 
         setTbCoaCustomTargets(prev => [...prev, { name, category, subCategory }]);
         setTbCoaTargetAccount(name);
+        setTbCoaTargetSelectionMeta(null);
         setTbCoaCustomTargetDialog(null);
         setExtractionAlert({ type: 'success', message: `Custom target "${name}" added under ${scopeLabel}.` });
     };
@@ -6816,7 +7071,7 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
 
                             <div className="space-y-4">
                                 {categoryOrder.map((category) => {
-                                    const section = (CHART_OF_ACCOUNTS as any)[category];
+                                    const section = (STATEMENT_GROUPING_TARGETS as any)[category];
                                     if (!section) return null;
 
                                     const blocks: { subCategory?: string; accounts: string[] }[] = [];
@@ -6942,7 +7197,13 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                                                                         )}
                                                                         <button
                                                                             type="button"
-                                                                            onClick={() => setTbCoaTargetAccount(account)}
+                                                                            onClick={() => {
+                                                                                setTbCoaTargetAccount(account);
+                                                                                setTbCoaTargetSelectionMeta(
+                                                                                    resolveStatementTargetMeta(account, category, block.subCategory)
+                                                                                    || { category, subCategory: block.subCategory }
+                                                                                );
+                                                                            }}
                                                                             className={`w-full text-left rounded-xl border px-3 py-2.5 transition-all ${isCustomTarget ? 'pr-12' : ''} ${isSelected
                                                                                 ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
                                                                                 : 'border-border bg-background/40 hover:bg-muted/40 hover:border-muted-foreground/30'}`}
