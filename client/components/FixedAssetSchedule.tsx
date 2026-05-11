@@ -459,7 +459,7 @@ export const initFixedAssetsFromWorkingNotes = (
     const isAccDep = (d: string) => /^accumulated\s+depreci?ation/i.test(d);
     const normalizeName = (value: string) => cleanDesc(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const fixedAssetKeywords = [
-        'asset', 'plant', 'equipment', 'machinery', 'machine', 'motor', 'vehicle', 'furniture',
+        'plant', 'equipment', 'machinery', 'machine', 'motor', 'vehicle', 'furniture',
         'fixture', 'computer', 'office', 'tool', 'leasehold', 'building', 'warehouse',
         'truck', 'container', 'generator', 'air condition',
         'signboard', 'renovation', 'freehold', 'right of use',
@@ -470,14 +470,20 @@ export const initFixedAssetsFromWorkingNotes = (
     const excludedKeywords = [
         'cash', 'bank', 'current', 'receivable', 'payable', 'inventory', 'stock', 'prepaid', 'deposit',
         'vat', 'tax', 'loan', 'borrow', 'equity', 'capital', 'retained', 'revenue', 'income',
-        'expense', 'liabil', 'intangible', 'goodwill', 'patent', 'trademark',
+        'expense', 'liabil', 'intangible', 'goodwill', 'patent', 'trademark', 'advance',
         'software', 'license', 'licence', 'copyright', 'copywright', 'brand', 'franchise', 'amorti'
     ];
     const isLikelyFixedAssetName = (value: string) => {
         const normalized = normalizeName(value);
         if (!normalized) return false;
+        // Structural exclusion: inter-party flows (due to/from, loan to/from,
+        // advance to/from, related party) describe relationships, not assets.
+        if (ACCOUNT_STRUCTURAL_EXCLUSION_PHRASES.some(p => normalized.includes(p))) return false;
         if (excludedKeywords.some(keyword => normalized.includes(keyword))) return false;
         if (fixedAssetKeywords.some(keyword => normalized.includes(keyword))) return true;
+        // Match "fixed asset" as a full phrase only — the bare word "asset" is too
+        // broad and used to wrongly pull in things like "Net Asset Value".
+        if (/\bfixed\s+assets?\b/.test(normalized)) return true;
         return exactMatchKeywords.some(kw => new RegExp(`\\b${kw}s?\\b`).test(normalized));
     };
     const stripAccDep = (d: string) => d.replace(/^accumulated\s+depreci?ation\s*(of|on|[-–—])?\s*/i, '').trim();
@@ -504,6 +510,10 @@ export const initFixedAssetsFromWorkingNotes = (
                 const desc = cleanDesc(note.description || '');
                 if (!desc) return false;
                 if (isIntangibleSideDesc(desc)) return false;
+                // Reject relationship/liability rows even when they were filed under
+                // property_plant_equipment in saved data — e.g. "Advance to purchase
+                // fixed asset" or "Due to related parties – Vehicle Co.".
+                if (ACCOUNT_STRUCTURAL_EXCLUSION_PHRASES.some(p => normalizeName(desc).includes(p))) return false;
                 if (key === 'property_plant_equipment') return true;
                 if (isAccDep(desc)) return true;
                 return isLikelyFixedAssetName(desc) || isLikelyFixedAssetName(key.replace(/^custom_/, '').replace(/_/g, ' '));
@@ -601,12 +611,31 @@ export const initFixedAssetsFromWorkingNotes = (
 };
 
 /**
- * Determines if a trial balance account name is a fixed asset or accumulated depreciation account.
- * Used by all CT types to route these accounts to property_plant_equipment in BS mapping
- * and exclude them from other working notes.
+ * Phrases describing inter-party flows (amounts owed, advanced, loaned, or payable
+ * between the entity and a counterparty). When any appears in an account name, the
+ * account is a relationship/balance-sheet position — not the asset itself —
+ * regardless of any asset-like keywords appearing alongside. E.g.
+ * "Advance to purchase fixed asset" is a deposit/receivable not PPE;
+ * "Due to related parties - Brand Co." is a liability not intangible.
  */
+export const ACCOUNT_STRUCTURAL_EXCLUSION_PHRASES = [
+    'due to', 'due from', 'related part', 'loan to', 'loan from',
+    'advance to', 'advance from', 'payable to', 'receivable from',
+    'shareholder', 'director loan', 'director current'
+];
+
+export const hasStructuralExclusionPhrase = (accountName: string): boolean => {
+    const lower = String(accountName || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!lower) return false;
+    return ACCOUNT_STRUCTURAL_EXCLUSION_PHRASES.some(p => lower.includes(p));
+};
+
 export const isFixedAssetAccount = (accountName: string): boolean => {
     const lower = accountName.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Structural exclusion takes precedence: "Advance to purchase fixed asset"
+    // is a current asset deposit, not PPE, even though it contains "fixed asset".
+    if (ACCOUNT_STRUCTURAL_EXCLUSION_PHRASES.some(p => lower.includes(p))) return false;
 
     // Accumulated depreciation of fixed assets
     if (/accumulated\s+depreci/i.test(lower)) return true;

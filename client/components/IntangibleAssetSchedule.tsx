@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { IntangibleAssetCategory, WorkingNoteEntry } from '../types';
 import { PlusIcon, XMarkIcon, TrashIcon, ExclamationTriangleIcon } from './icons';
+import { hasStructuralExclusionPhrase } from './FixedAssetSchedule';
 
 const formatAccounting = (val: number): string => {
     if (Math.abs(val) < 0.5) return '-';
@@ -405,6 +406,11 @@ export const IntangibleAssetSchedule: React.FC<IntangibleAssetScheduleProps> = (
 export const isIntangibleAssetAccount = (accountName: string): boolean => {
     const lower = accountName.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 
+    // Structural exclusion takes precedence: "Due to related parties - ABC Brand Co."
+    // is a related-party liability, not an intangible, even though "brand" matches the
+    // intangible keyword list. Same for "Loan from director - Patent Holdings", etc.
+    if (hasStructuralExclusionPhrase(accountName)) return false;
+
     // Accumulated amortisation (any asset) — always intangible-side.
     if (/accumulated\s+amorti[sz]/i.test(lower)) return true;
     // Amortisation expense / charge — also intangible side.
@@ -456,11 +462,15 @@ export const initIntangibleAssetsFromWorkingNotes = (
         'cash', 'bank', 'current', 'receivable', 'payable', 'inventory', 'stock', 'prepaid', 'deposit',
         'vat', 'tax', 'loan', 'borrow', 'equity', 'capital', 'retained', 'revenue', 'income',
         'expense', 'liabil', 'property', 'plant', 'equipment', 'machinery', 'vehicle',
-        'furniture', 'fixture', 'building', 'warehouse', 'tool'
+        'furniture', 'fixture', 'building', 'warehouse', 'tool', 'advance'
     ];
     const isLikelyIntangibleName = (value: string) => {
         const normalized = normalizeName(value);
         if (!normalized) return false;
+        // Structural exclusion: relationship/liability phrases reject the row regardless
+        // of any intangible keyword present in the counterparty name (e.g. "Due to
+        // related parties – ABC Brand Co." must not become an intangible row).
+        if (hasStructuralExclusionPhrase(value)) return false;
         if (excludedNameKeywords.some(keyword => normalized.includes(keyword))) return false;
         return INTANGIBLE_NAME_KEYWORDS.some(keyword => normalized.includes(keyword));
     };
@@ -486,6 +496,10 @@ export const initIntangibleAssetsFromWorkingNotes = (
             (notes || []).filter(note => {
                 const desc = cleanDesc(note.description || '');
                 if (!desc) return false;
+                // Reject relationship/liability rows even when filed under intangible_assets
+                // in saved data — e.g. "Due to related parties – Brand Co." must not flow
+                // into the Intangible Asset Schedule.
+                if (hasStructuralExclusionPhrase(desc)) return false;
                 if (key === 'intangible_assets') return true;
                 if (isAccAmort(desc)) return true;
                 if (amortPairedNames.has(desc.toLowerCase())) return true;
