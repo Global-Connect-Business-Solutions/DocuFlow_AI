@@ -1887,7 +1887,9 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                     key = 'impairment_losses_intangible';
                 } else if (accountLower.includes('commission')) {
                     key = 'selling_distribution_expenses';
-                } else if (accountLower.includes('depreciation') || accountLower.includes('amortization')) {
+                } else if (accountLower.includes('amortization') || accountLower.includes('amortisation')) {
+                    key = 'amortisation_intangible';
+                } else if (accountLower.includes('depreciation')) {
                     key = 'depreciation_ppe';
                 } else if (accountLower.includes('interest expense') || accountLower.includes('bank charge') || accountLower.includes('finance cost') || accountLower.includes('borrowing cost')) {
                     key = 'finance_costs';
@@ -1949,10 +1951,11 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
         const admin = getValue('administrative_expenses');
         const finance = getValue('finance_costs');
         const depr = getValue('depreciation_ppe');
+        const amortInt = getValue('amortisation_intangible');
 
         // Operating profit = Revenue - COGS - expenses (calculated from raw values to avoid cascading rounding)
         const operatingProfit = rev - cost
-            - impairmentPpe - impairmentInt - promo - forex - selling - salariesWages - admin - finance - depr;
+            - impairmentPpe - impairmentInt - promo - forex - selling - salariesWages - admin - finance - depr - amortInt;
         pnlMapping['operating_profit'] = { currentYear: Math.round(operatingProfit), previousYear: 0 };
 
         // Net Profit before tax = Revenue - COGS - expenses + other income items
@@ -2211,12 +2214,12 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
             derivingRevenueExpenses: getPnl('cost_of_revenue'),
             grossProfit: getPnl('gross_profit'),
             salaries: getPnl('administrative_expenses') * 0.6,
-            depreciation: getPnl('depreciation_ppe'),
+            depreciation: getPnl('depreciation_ppe') + getPnl('amortisation_intangible'),
             fines: 0,
             donations: 0,
             entertainment: getPnl('business_promotion_selling'),
             otherExpenses: getPnl('administrative_expenses') * 0.4 + getPnl('foreign_exchange_loss') + getPnl('impairment_losses_ppe') + getPnl('impairment_losses_intangible'),
-            nonOpExpensesExcl: getPnl('administrative_expenses') + getPnl('selling_distribution_expenses') + getPnl('business_promotion_selling') + getPnl('finance_costs') + getPnl('depreciation_ppe') + getPnl('foreign_exchange_loss') + getPnl('impairment_losses_ppe') + getPnl('impairment_losses_intangible'),
+            nonOpExpensesExcl: getPnl('administrative_expenses') + getPnl('selling_distribution_expenses') + getPnl('business_promotion_selling') + getPnl('finance_costs') + getPnl('depreciation_ppe') + getPnl('amortisation_intangible') + getPnl('foreign_exchange_loss') + getPnl('impairment_losses_ppe') + getPnl('impairment_losses_intangible'),
             dividendsReceived: 0,
             otherNonOpRevenue: getPnl('other_income') + getPnl('unrealised_gain_loss_fvtpl') + getPnl('share_profits_associates') + getPnl('gain_loss_revaluation_property'),
             interestIncome: 0,
@@ -2284,6 +2287,7 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                     selling_distribution_expenses: { currentYear: 0, previousYear: 0 },
                     finance_costs: { currentYear: ftaFormValues.interestExpense, previousYear: 0 },
                     depreciation_ppe: { currentYear: ftaFormValues.depreciation, previousYear: 0 },
+                    amortisation_intangible: { currentYear: 0, previousYear: 0 },
                     profit_loss_year: { currentYear: ftaFormValues.netProfit, previousYear: 0 },
 
                     provisions_corporate_tax: { currentYear: ftaFormValues.corporateTaxLiability, previousYear: 0 },
@@ -2404,10 +2408,10 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 derivingRevenueExpenses: getPnl('cost_of_revenue'),
                 grossProfit: getPnl('gross_profit'),
                 salaries: getPnl('administrative_expenses') * 0.6,
-                depreciation: getPnl('depreciation_ppe'),
+                depreciation: getPnl('depreciation_ppe') + getPnl('amortisation_intangible'),
                 entertainment: getPnl('business_promotion_selling'),
                 otherExpenses: getPnl('administrative_expenses') * 0.4 + getPnl('selling_distribution_expenses') + getPnl('foreign_exchange_loss') + getPnl('impairment_losses_ppe') + getPnl('impairment_losses_intangible'),
-                nonOpExpensesExcl: getPnl('administrative_expenses') + getPnl('selling_distribution_expenses') + getPnl('business_promotion_selling') + getPnl('finance_costs') + getPnl('depreciation_ppe') + getPnl('foreign_exchange_loss') + getPnl('impairment_losses_ppe') + getPnl('impairment_losses_intangible'),
+                nonOpExpensesExcl: getPnl('administrative_expenses') + getPnl('selling_distribution_expenses') + getPnl('business_promotion_selling') + getPnl('finance_costs') + getPnl('depreciation_ppe') + getPnl('amortisation_intangible') + getPnl('foreign_exchange_loss') + getPnl('impairment_losses_ppe') + getPnl('impairment_losses_intangible'),
                 finance_costs: getPnl('finance_costs'),
                 netProfit: getPnl('profit_loss_year'),
                 // OCI
@@ -3492,18 +3496,18 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
             }
 
             // GP/Income/Expenses -> Operating + Net Profit
-            if (['revenue', 'cost_of_revenue', 'gross_profit', 'other_income', 'unrealised_gain_loss_fvtpl', 'share_profits_associates', 'gain_loss_revaluation_property', 'business_promotion_selling', 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges', 'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'impairment_losses_ppe', 'impairment_losses_intangible'].includes(id)) {
+            if (['revenue', 'cost_of_revenue', 'gross_profit', 'other_income', 'unrealised_gain_loss_fvtpl', 'share_profits_associates', 'gain_loss_revaluation_property', 'business_promotion_selling', 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges', 'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'amortisation_intangible', 'impairment_losses_ppe', 'impairment_losses_intangible'].includes(id)) {
                 const revenue = get('revenue');
                 const costOfRevenue = get('cost_of_revenue');
                 const otherInc = get('other_income') + get('unrealised_gain_loss_fvtpl') + get('share_profits_associates') + get('gain_loss_revaluation_property');
-                const expenses = get('business_promotion_selling') + get('foreign_exchange_loss') + get('selling_distribution_expenses') + get('salaries_wages_charges') + get('administrative_expenses') + get('finance_costs') + get('depreciation_ppe') + get('impairment_losses_ppe') + get('impairment_losses_intangible');
+                const expenses = get('business_promotion_selling') + get('foreign_exchange_loss') + get('selling_distribution_expenses') + get('salaries_wages_charges') + get('administrative_expenses') + get('finance_costs') + get('depreciation_ppe') + get('amortisation_intangible') + get('impairment_losses_ppe') + get('impairment_losses_intangible');
                 const operating = revenue - costOfRevenue - expenses;
                 set('operating_profit', Math.round(operating));
                 set('profit_loss_year', Math.round(operating + otherInc));
             }
 
             // Net Profit / Tax -> Profit After Tax
-            if (['revenue', 'cost_of_revenue', 'gross_profit', 'other_income', 'unrealised_gain_loss_fvtpl', 'share_profits_associates', 'gain_loss_revaluation_property', 'business_promotion_selling', 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges', 'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'impairment_losses_ppe', 'impairment_losses_intangible', 'profit_loss_year', 'provisions_corporate_tax'].includes(id)) {
+            if (['revenue', 'cost_of_revenue', 'gross_profit', 'other_income', 'unrealised_gain_loss_fvtpl', 'share_profits_associates', 'gain_loss_revaluation_property', 'business_promotion_selling', 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges', 'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'amortisation_intangible', 'impairment_losses_ppe', 'impairment_losses_intangible', 'profit_loss_year', 'provisions_corporate_tax'].includes(id)) {
                 set('profit_after_tax', Math.round(get('profit_loss_year') - get('provisions_corporate_tax')));
             }
 
@@ -4525,6 +4529,7 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 'administrative_expenses',
                 'finance_costs',
                 'depreciation_ppe',
+                'amortisation_intangible',
                 'provisions_corporate_tax'
             ]);
             const pnlValuesForPdf: Record<string, { currentYear: number; previousYear: number }> = {};
@@ -4540,7 +4545,7 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
             const pnlExpenseDeductIds = [
                 'impairment_losses_ppe', 'impairment_losses_intangible', 'business_promotion_selling',
                 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges',
-                'administrative_expenses', 'finance_costs', 'depreciation_ppe'
+                'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'amortisation_intangible'
             ];
             const recomputeForYear = (year: 'currentYear' | 'previousYear') => {
                 const getV = (id: string) => computedValues.pnl[id]?.[year] || 0;
@@ -5186,7 +5191,7 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 otherNonOpRevenue: computedValues.pnl['other_income']?.currentYear || 0,
 
                 salaries: computedValues.pnl['administrative_expenses']?.currentYear ? (computedValues.pnl['administrative_expenses'].currentYear * 0.4) : (prev.salaries || 0),
-                depreciation: computedValues.pnl['depreciation_ppe']?.currentYear || 0,
+                depreciation: (computedValues.pnl['depreciation_ppe']?.currentYear || 0) + (computedValues.pnl['amortisation_intangible']?.currentYear || 0),
                 netProfit: computedValues.pnl['profit_loss_year']?.currentYear || prev.netProfit,
 
                 // Balance Sheet Sync
@@ -5246,7 +5251,7 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                 grossProfit: computedValues.pnl['gross_profit']?.currentYear || 0,
                 otherNonOpRevenue: computedValues.pnl['other_income']?.currentYear || 0,
                 salaries: computedValues.pnl['administrative_expenses']?.currentYear ? (computedValues.pnl['administrative_expenses'].currentYear * 0.4) : (prev.salaries || 0),
-                depreciation: computedValues.pnl['depreciation_ppe']?.currentYear || 0,
+                depreciation: (computedValues.pnl['depreciation_ppe']?.currentYear || 0) + (computedValues.pnl['amortisation_intangible']?.currentYear || 0),
                 netProfit: computedValues.pnl['profit_loss_year']?.currentYear || prev.netProfit,
                 ppe: computedValues.bs['property_plant_equipment']?.currentYear || 0,
                 intangibleAssets: computedValues.bs['intangible_assets']?.currentYear || 0,

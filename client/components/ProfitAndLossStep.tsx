@@ -123,6 +123,7 @@ export const PNL_ITEMS: ProfitAndLossItem[] = [
     { id: 'administrative_expenses', label: 'Administrative expenses', type: 'item', isEditable: true },
     { id: 'finance_costs', label: 'Finance costs', type: 'item', isEditable: true },
     { id: 'depreciation_ppe', label: 'Depreciation on property, plant and equipment', type: 'item', isEditable: true },
+    { id: 'amortisation_intangible', label: 'Amortisation on intangible assets', type: 'item', isEditable: true },
 
     { id: 'operating_profit', label: 'Profit/(Loss) from Operating Activities', type: 'total', isEditable: false },
     { id: 'other_income', label: 'Other income', type: 'item', isEditable: true },
@@ -183,6 +184,7 @@ export const ProfitAndLossStep: React.FC<ProfitAndLossStepProps> = ({
         'administrative_expenses',
         'finance_costs',
         'depreciation_ppe',
+        'amortisation_intangible',
         'foreign_exchange_loss',
         'business_promotion_selling',
         'impairment_losses_ppe',

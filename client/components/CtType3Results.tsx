@@ -657,6 +657,8 @@ const STATEMENT_TARGET_LOOKUP: Record<string, StatementTargetMeta> = (() => {
         'administrative expenses': 'administrative_expenses',
         'finance costs': 'finance_costs',
         'depreciation on property plant and equipment': 'depreciation_ppe',
+        'amortisation on intangible assets': 'amortisation_intangible',
+        'amortization on intangible assets': 'amortisation_intangible',
         'other income': 'other_income',
         'gain on revaluation of property': 'gain_revaluation_property',
         'share of gain loss on property revaluation of associates': 'share_gain_loss_revaluation_associates',
@@ -1104,6 +1106,7 @@ const PNL_STRUCTURE_TYPE3 = [
     { id: 'business_promotion_selling', label: 'Business Promotion & Selling', type: 'item' },
     { id: 'finance_costs', label: 'Finance Costs', type: 'item' },
     { id: 'depreciation_ppe', label: 'Depreciation (PPE)', type: 'item' },
+    { id: 'amortisation_intangible', label: 'Amortisation on intangible assets', type: 'item' },
     { id: 'foreign_exchange_loss', label: 'Foreign Exchange Gain/Loss', type: 'item' },
     { id: 'operating_profit', label: 'Profit/(Loss) from Operating Activities', type: 'total' },
     { id: 'other_income', label: 'Other income', type: 'item' },
@@ -1777,6 +1780,7 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                 'administrative_expenses',
                 'finance_costs',
                 'depreciation_ppe',
+                'amortisation_intangible',
                 'provisions_corporate_tax'
             ]);
 
@@ -2712,7 +2716,9 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                     pushValue('selling_distribution_expenses');
                 } else if (isCorporateTaxExpenseDescription(accountLower)) {
                     pushValue('provisions_corporate_tax');
-                } else if (accountLower.includes('depreciation') || accountLower.includes('amortization')) {
+                } else if (accountLower.includes('amortization') || accountLower.includes('amortisation')) {
+                    pushValue('amortisation_intangible');
+                } else if (accountLower.includes('depreciation')) {
                     pushValue('depreciation_ppe');
                 } else if (accountLower.includes('interest expense') || accountLower.includes('finance cost') || accountLower.includes('bank charge')) {
                     pushValue('finance_costs');
@@ -2743,9 +2749,10 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
         const admin = getYearVal('administrative_expenses', yearKey);
         const financeCosts = getYearVal('finance_costs', yearKey);
         const depreciation = getYearVal('depreciation_ppe', yearKey);
+        const amortisation = getYearVal('amortisation_intangible', yearKey);
 
         const grossProfit = revenue - costOfRevenue;
-        const operatingExpenses = impairmentPpe + impairmentInt + businessPromotion + forexLoss + sellingDist + salariesWages + admin + financeCosts + depreciation;
+        const operatingExpenses = impairmentPpe + impairmentInt + businessPromotion + forexLoss + sellingDist + salariesWages + admin + financeCosts + depreciation + amortisation;
         const rawOperatingProfit = revenue - costOfRevenue - operatingExpenses;
         const operatingProfit = Math.round(rawOperatingProfit);
         const profitLossYear = Math.round(rawOperatingProfit + otherIncome + unrealised + shareProfits + revaluation);
@@ -4086,11 +4093,12 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
             const adminExp = getV('administrative_expenses', year);
             const financeCosts = getV('finance_costs', year);
             const depreciationPpe = getV('depreciation_ppe', year);
+            const amortisationIntangible = getV('amortisation_intangible', year);
 
             // Operating profit calculated from raw revenue/cost to avoid cascading rounding
             const operatingProfit = revenue - costOfRevenue
                 - impairmentPpe - impairmentIntangible - businessPromotion - foreignExchangeLoss
-                - sellingDist - salariesWages - adminExp - financeCosts - depreciationPpe;
+                - sellingDist - salariesWages - adminExp - financeCosts - depreciationPpe - amortisationIntangible;
 
             updatedValues['operating_profit'] = {
                 ...updatedValues['operating_profit'],

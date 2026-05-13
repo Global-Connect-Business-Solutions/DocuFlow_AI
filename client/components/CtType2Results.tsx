@@ -673,9 +673,16 @@ const PNL_MAPPING: MappingRule[] = [
         keywords: [
             'depreciation � furniture & equipment',
             'depreciation � vehicles',
+            'depreciation'
+        ]
+    },
+    {
+        id: 'amortisation_intangible',
+        keywords: [
             'amortization � intangibles',
-            'depreciation',
-            'amortization'
+            'amortisation � intangibles',
+            'amortization',
+            'amortisation'
         ]
     }
 ];
@@ -2443,7 +2450,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                 profitLossYear += val;
             }
             // Expense items to subtract
-            else if (['impairment_losses_ppe', 'impairment_losses_intangible', 'business_promotion_selling', 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges', 'administrative_expenses', 'finance_costs', 'depreciation_ppe'].includes(item.id)) {
+            else if (['impairment_losses_ppe', 'impairment_losses_intangible', 'business_promotion_selling', 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges', 'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'amortisation_intangible'].includes(item.id)) {
                 operatingProfit -= val;
                 profitLossYear -= val;
             }
@@ -2679,6 +2686,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
             administrative_expenses: totals.administrative_expenses || 0,
             finance_costs: totals.finance_costs || 0,
             depreciation_ppe: totals.depreciation_ppe || 0,
+            amortisation_intangible: totals.amortisation_intangible || 0,
             gain_revaluation_property: 0,
             share_gain_loss_revaluation_associates: 0,
             changes_fair_value_available_sale: 0,
@@ -4307,6 +4315,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                 'administrative_expenses',
                 'finance_costs',
                 'depreciation_ppe',
+                'amortisation_intangible',
                 'provisions_corporate_tax'
             ]);
             pnlStructure.forEach(item => {
@@ -4329,7 +4338,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
             const pnlExpenseDeductIds = [
                 'impairment_losses_ppe', 'impairment_losses_intangible', 'business_promotion_selling',
                 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges',
-                'administrative_expenses', 'finance_costs', 'depreciation_ppe'
+                'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'amortisation_intangible'
             ];
             const freshRevenue = Math.abs(pnlValues.revenue || 0);
             const freshCostOfRevenue = Math.abs(pnlValues.cost_of_revenue || 0);

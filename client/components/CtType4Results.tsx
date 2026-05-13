@@ -588,7 +588,9 @@ const mapPnlItemsToNotes = (items: any[]): { notes: Record<string, WorkingNoteEn
             addNote(notes, 'administrative_expenses', desc, amount, previousAmount);
         } else if (lower.includes('finance cost') || lower.includes('finance charge') || (lower.includes('bank') && lower.includes('finance')) || lower.includes('interest expense')) {
             addNote(notes, 'finance_costs', desc, amount, previousAmount);
-        } else if (lower.includes('depreciation') || lower.includes('amortisation') || lower.includes('amortization')) {
+        } else if (lower.includes('amortisation') || lower.includes('amortization')) {
+            addNote(notes, 'amortisation_intangible', desc, amount, previousAmount);
+        } else if (lower.includes('depreciation')) {
             addNote(notes, 'depreciation_ppe', desc, amount, previousAmount);
         } else if (lower.includes('other income') || lower.includes('miscellaneous income') || lower.includes('interest income') || lower.includes('dividend income')) {
             addNote(notes, 'other_income', desc, amount, previousAmount);
@@ -1240,6 +1242,7 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
                 'administrative_expenses',
                 'finance_costs',
                 'depreciation_ppe',
+                'amortisation_intangible',
                 'provisions_corporate_tax'
             ]);
             const pnlValuesForPdf: Record<string, { currentYear: number; previousYear: number }> = {};
@@ -1255,7 +1258,7 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
             const pnlExpenseDeductIds = [
                 'impairment_losses_ppe', 'impairment_losses_intangible', 'business_promotion_selling',
                 'foreign_exchange_loss', 'selling_distribution_expenses', 'salaries_wages_charges',
-                'administrative_expenses', 'finance_costs', 'depreciation_ppe'
+                'administrative_expenses', 'finance_costs', 'depreciation_ppe', 'amortisation_intangible'
             ];
             const recomputeForYear = (year: 'currentYear' | 'previousYear') => {
                 const getV = (id: string) => pnlValues[id]?.[year] || 0;
@@ -1760,7 +1763,8 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
             else if (desc.includes('salary') || desc.includes('salaries') || desc.includes('wage')) noteRefToPnlAccount[ref] = 'salaries_wages_charges';
             else if (desc.includes('administrative') || desc.includes('admin')) noteRefToPnlAccount[ref] = 'administrative_expenses';
             else if (desc.includes('finance cost') || desc.includes('interest expense')) noteRefToPnlAccount[ref] = 'finance_costs';
-            else if (desc.includes('depreciation') || desc.includes('amortisation')) noteRefToPnlAccount[ref] = 'depreciation_ppe';
+            else if (desc.includes('amortisation') || desc.includes('amortization')) noteRefToPnlAccount[ref] = 'amortisation_intangible';
+            else if (desc.includes('depreciation')) noteRefToPnlAccount[ref] = 'depreciation_ppe';
             else if (desc.includes('other income')) noteRefToPnlAccount[ref] = 'other_income';
         });
         bsItems.forEach((item: any) => {
@@ -1799,7 +1803,8 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
             if (title.includes('revenue') || title.includes('sales') || title.includes('turnover')) return { id: 'revenue', confident: true };
             if (title.includes('cost of')) return { id: 'cost_of_revenue', confident: true };
             if (title.includes('salary') || title.includes('staff') || title.includes('employee') || title.includes('personnel')) return { id: 'salaries_wages_charges', confident: true };
-            if (title.includes('depreciation') || title.includes('amortisation')) return { id: 'depreciation_ppe', confident: true };
+            if (title.includes('amortisation') || title.includes('amortization')) return { id: 'amortisation_intangible', confident: true };
+            if (title.includes('depreciation')) return { id: 'depreciation_ppe', confident: true };
             if (title.includes('finance cost') || title.includes('interest')) return { id: 'finance_costs', confident: true };
             if (title.includes('other income')) return { id: 'other_income', confident: true };
             if (title.includes('selling') || title.includes('distribution') || title.includes('marketing')) return { id: 'selling_distribution_expenses', confident: true };
@@ -2158,6 +2163,7 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
                 administrative_expenses: { currentYear: toAedRounded(adminExpenses) || prev.administrative_expenses?.currentYear || 0, previousYear: hasPrevPnlData ? toAedRounded(adminExpensesPrev) : (prev.administrative_expenses?.previousYear || 0) },
                 finance_costs: { currentYear: toAedRounded(financeCosts) || prev.finance_costs?.currentYear || 0, previousYear: hasPrevPnlData ? toAedRounded(financeCostsPrev) : (prev.finance_costs?.previousYear || 0) },
                 depreciation_ppe: { currentYear: toAedRounded(depreciation) || prev.depreciation_ppe?.currentYear || 0, previousYear: hasPrevPnlData ? toAedRounded(depreciationPrev) : (prev.depreciation_ppe?.previousYear || 0) },
+                amortisation_intangible: { currentYear: prev.amortisation_intangible?.currentYear || 0, previousYear: prev.amortisation_intangible?.previousYear || 0 },
                 profit_loss_year: { currentYear: toAedRounded(netProfit || profitFromOps) || prev.profit_loss_year?.currentYear || 0, previousYear: hasPrevPnlData ? toAedRounded(netProfitPrev || profitFromOpsPrev) : (prev.profit_loss_year?.previousYear || 0) },
                 total_comprehensive_income: { currentYear: toAedRounded(totalCompIncome) || prev.total_comprehensive_income?.currentYear || 0, previousYear: hasPrevPnlData ? toAedRounded(totalCompIncomePrev) : (prev.total_comprehensive_income?.previousYear || 0) },
                 provisions_corporate_tax: { currentYear: toAedRounded(provisionTax) || prev.provisions_corporate_tax?.currentYear || 0, previousYear: hasPrevPnlData ? toAedRounded(provisionTaxPrev) : (prev.provisions_corporate_tax?.previousYear || 0) },
@@ -2211,7 +2217,7 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
                 derivingRevenueExpenses: pnlValues.cost_of_revenue?.currentYear ?? prev.derivingRevenueExpenses ?? 0,
                 grossProfit: pnlValues.gross_profit?.currentYear ?? prev.grossProfit ?? 0,
                 salaries: prev.salaries ?? 0,
-                depreciation: pnlValues.depreciation_ppe?.currentYear ?? prev.depreciation ?? 0,
+                depreciation: (pnlValues.depreciation_ppe?.currentYear ?? 0) + (pnlValues.amortisation_intangible?.currentYear ?? 0) || (prev.depreciation ?? 0),
                 otherExpenses: prev.otherExpenses ?? 0,
                 netProfit: pnlValues.profit_loss_year?.currentYear ?? prev.netProfit ?? 0,
                 accountingIncomeTaxPeriod: pnlValues.total_comprehensive_income?.currentYear ?? prev.accountingIncomeTaxPeriod ?? prev.totalComprehensiveIncome ?? 0,
@@ -2325,11 +2331,12 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
                 const admin = Math.abs(get('administrative_expenses', year));
                 const financeCosts = Math.abs(get('finance_costs', year));
                 const depreciation = Math.abs(get('depreciation_ppe', year));
+                const amortisation = Math.abs(get('amortisation_intangible', year));
                 const grossProfit = get('revenue', year) - get('cost_of_revenue', year);
 
                 // Calculate from raw values to avoid cascading rounding
                 const rawOperatingProfit = (revenue - costOfRevenue)
-                    - (impairmentPpe + impairmentInt + businessPromotion + forexLoss + sellingDist + salariesWages + admin + financeCosts + depreciation);
+                    - (impairmentPpe + impairmentInt + businessPromotion + forexLoss + sellingDist + salariesWages + admin + financeCosts + depreciation + amortisation);
                 const operatingProfit = Math.round(rawOperatingProfit);
                 const profitLossYear = Math.round(rawOperatingProfit + otherIncome + unrealised + shareProfits + revaluation);
 

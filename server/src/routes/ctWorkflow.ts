@@ -594,10 +594,11 @@ const recalculatePnlStepData = (pnlValues: any) => {
         const adminExp = getV('administrative_expenses', year);
         const financeCosts = getV('finance_costs', year);
         const depreciationPpe = getV('depreciation_ppe', year);
+        const amortisationIntangible = getV('amortisation_intangible', year);
 
         const operatingProfit = grossProfit + otherIncome + unrealisedGainLoss + shareProfits + gainLossProperty
             - impairmentPpe - impairmentIntangible - businessPromotion - foreignExchangeLoss
-            - sellingDist - adminExp - financeCosts - depreciationPpe;
+            - sellingDist - adminExp - financeCosts - depreciationPpe - amortisationIntangible;
 
         updatedValues['operating_profit'] = {
             ...updatedValues['operating_profit'],

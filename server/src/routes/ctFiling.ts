@@ -211,6 +211,7 @@ const PNL_EXPENSE_ITEM_IDS = new Set([
   "administrative_expenses",
   "finance_costs",
   "depreciation_ppe",
+  "amortisation_intangible",
   "provisions_corporate_tax"
 ]);
 
