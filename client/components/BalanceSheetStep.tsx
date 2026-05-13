@@ -452,8 +452,8 @@ export const BalanceSheetStep: React.FC<BalanceSheetStepProps> = ({
                         </button>
                     )}
                     {onNext && (
-                        <button onClick={handleContinueAttempt} className={`flex items-center px-4 py-1.5 font-bold rounded-lg transition-all shadow-lg whitespace-nowrap text-xs ${isFullyBalanced ? 'bg-primary hover:bg-primary/90 text-primary-foreground hover:shadow-primary/30' : 'bg-status-warning-soft hover:bg-status-warning-soft text-foreground'}`}>
-                            {isFullyBalanced ? 'Confirm & Continue' : 'Proceed with Warning'} <ArrowRightIcon className="w-4 h-4 ml-1.5" />
+                        <button onClick={handleContinueAttempt} className={`flex items-center px-4 py-1.5 font-bold rounded-lg transition-all shadow-lg whitespace-nowrap text-xs ${isFullyBalanced ? 'bg-primary hover:bg-primary/90 text-primary-foreground hover:shadow-primary/30' : 'bg-muted text-muted-foreground cursor-not-allowed opacity-70'}`}>
+                            {isFullyBalanced ? 'Confirm & Continue' : 'Balance Required to Continue'} <ArrowRightIcon className="w-4 h-4 ml-1.5" />
                         </button>
                     )}
                 </div>
@@ -709,13 +709,12 @@ export const BalanceSheetStep: React.FC<BalanceSheetStepProps> = ({
                                     </p>
                                 </>
                             )}
-                            <p className="text-xs text-muted-foreground italic">
-                                You can proceed, but please note that this discrepancy might need to be resolved before final submission.
+                            <p className="text-xs text-destructive font-semibold italic">
+                                Total Assets must equal Total Equity &amp; Liabilities for both Current Year and Previous Year before you can continue to the next step.
                             </p>
                         </div>
                         <div className="p-4 bg-muted/50 flex gap-3 justify-center border-t border-border">
-                            <button onClick={() => setShowBalanceWarning(false)} className="px-4 py-2 text-muted-foreground hover:text-foreground font-semibold text-sm">Review Changes</button>
-                            <button onClick={() => { setShowBalanceWarning(false); onNext?.(); }} className="px-6 py-2 bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold rounded-lg text-sm transition-colors shadow-lg">Proceed Anyway</button>
+                            <button onClick={() => setShowBalanceWarning(false)} className="px-6 py-2 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-lg text-sm transition-colors shadow-lg">Review &amp; Fix</button>
                         </div>
                     </div>
                 </div>
