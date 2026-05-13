@@ -46,7 +46,7 @@ import {
 } from '../services/geminiService';
 import { ctFilingService } from '../services/ctFilingService';
 import { ProfitAndLossStep, PNL_ITEMS, type ProfitAndLossItem } from './ProfitAndLossStep';
-import { BalanceSheetStep, BS_ITEMS, type BalanceSheetItem } from './BalanceSheetStep';
+import { BalanceSheetStep, BS_ITEMS, computeBalanceState, type BalanceSheetItem } from './BalanceSheetStep';
 import { WorkflowStepper } from './WorkflowStepper';
 import { WorkflowNavigation } from './WorkflowNavigation';
 import type { WorkingNoteEntry, FixedAssetCategory, IntangibleAssetCategory } from '../types';
@@ -8118,11 +8118,14 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
         </div>
     );
 
-    const renderStep5BalanceSheet = () => (
+    const renderStep5BalanceSheet = () => {
+        const effectiveBsStructure = bsStructure.length ? bsStructure : BS_ITEMS;
+        const bsBalance = computeBalanceState(balanceSheetValues, effectiveBsStructure);
+        return (
         <div>
             <BalanceSheetStep
                 data={balanceSheetValues}
-                structure={bsStructure.length ? bsStructure : BS_ITEMS}
+                structure={effectiveBsStructure}
                 onChange={handleBalanceSheetChange}
                 onExport={handleExportStepBS}
                 onAddAccount={handleAddBsAccount}
@@ -8139,10 +8142,12 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
             <WorkflowNavigation
                 onBack={handleBack}
                 onNext={handleContinueToTaxComp}
-                nextLabel="Confirm & Continue"
+                nextLabel={bsBalance.isFullyBalanced ? 'Confirm & Continue' : 'Balance Required to Continue'}
+                nextDisabled={!bsBalance.isFullyBalanced}
             />
         </div>
-    );
+        );
+    };
 
     const handleExportTaxComputation = () => {
         const getType3TaxBaseFromPnl = () => Math.round(

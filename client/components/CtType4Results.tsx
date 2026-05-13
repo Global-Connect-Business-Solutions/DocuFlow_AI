@@ -29,7 +29,7 @@ import {
 import { PdfPreviewModal } from './PdfPreviewModal';
 import { FileUploadArea } from './VatFilingUpload';
 import { ProfitAndLossStep, PNL_ITEMS, normalizePnlStructure, type ProfitAndLossItem } from './ProfitAndLossStep';
-import { BalanceSheetStep, BS_ITEMS, type BalanceSheetItem } from './BalanceSheetStep';
+import { BalanceSheetStep, BS_ITEMS, computeBalanceState, type BalanceSheetItem } from './BalanceSheetStep';
 import { initFixedAssetsFromWorkingNotes, isFixedAssetAccount } from './FixedAssetSchedule';
 import { initIntangibleAssetsFromWorkingNotes, isIntangibleAssetAccount } from './IntangibleAssetSchedule';
 import { useCtWorkflow } from '../hooks/useCtWorkflow';
@@ -3897,7 +3897,9 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
         }
     };
 
-    const renderStepBalanceSheet = () => (
+    const renderStepBalanceSheet = () => {
+        const bsBalance = computeBalanceState(balanceSheetValues, bsStructure.length ? bsStructure : BS_ITEMS);
+        return (
         <div>
             <BalanceSheetStep
                 data={balanceSheetValues}
@@ -3923,10 +3925,12 @@ export const CtType4Results: React.FC<CtType4ResultsProps> = ({ currency, compan
             <WorkflowNavigation
                 onBack={handleBack}
                 onNext={handleContinueFromBalanceSheet}
-                nextLabel="Confirm & Continue"
+                nextLabel={bsBalance.isFullyBalanced ? 'Confirm & Continue' : 'Balance Required to Continue'}
+                nextDisabled={!bsBalance.isFullyBalanced}
             />
         </div>
-    );
+        );
+    };
 
     const handleExportTaxComputation = () => {
         const getType4TaxBaseFromPnl = () => Math.round(

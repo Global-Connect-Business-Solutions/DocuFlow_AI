@@ -54,7 +54,7 @@ import type { Transaction, Invoice, TrialBalanceEntry, FinancialStatements, Open
 import { LoadingIndicator } from './LoadingIndicator';
 import { OpeningBalances, initialAccountData } from './OpeningBalances';
 import { ProfitAndLossStep, PNL_ITEMS } from './ProfitAndLossStep';
-import { BalanceSheetStep, BS_ITEMS } from './BalanceSheetStep';
+import { BalanceSheetStep, BS_ITEMS, computeBalanceState } from './BalanceSheetStep';
 import { FileUploadArea } from './VatFilingUpload';
 import {
     extractGenericDetailsFromDocuments,
@@ -8222,7 +8222,9 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
         }
     }, [handleBalanceSheetChange]);
 
-    const renderStep11BalanceSheet = () => (
+    const renderStep11BalanceSheet = () => {
+        const bsBalance = computeBalanceState(bsDisplayData, bsStructure.length ? bsStructure : BS_ITEMS);
+        return (
         <>
             <BalanceSheetStep
                 data={bsDisplayData}
@@ -8240,9 +8242,15 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                 periodEnd={period?.end ? new Date(period.end).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : undefined}
                 previousPeriodEnd={period?.start ? new Date(period.start).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : undefined}
             />
-            <WorkflowNavigation onBack={handleBack} onNext={handleContinueToTaxComp} nextLabel="Confirm & Continue" />
+            <WorkflowNavigation
+                onBack={handleBack}
+                onNext={handleContinueToTaxComp}
+                nextLabel={bsBalance.isFullyBalanced ? 'Confirm & Continue' : 'Balance Required to Continue'}
+                nextDisabled={!bsBalance.isFullyBalanced}
+            />
         </>
-    );
+        );
+    };
 
     const handleExportTaxComputation = () => {
         const wb = XLSX.utils.book_new();

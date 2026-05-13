@@ -115,6 +115,98 @@ interface BalanceSheetStepProps {
     verification?: Record<string, BsVerificationResult>;
 }
 
+export const computeBalanceSheetTotals = (
+    data: Record<string, { currentYear: number; previousYear: number }>,
+    structure: BalanceSheetItem[]
+): Record<string, { currentYear: number; previousYear: number }> => {
+    const getD = (id: string, year: 'currentYear' | 'previousYear') => data[id]?.[year] || 0;
+    const itemsBefore = (totalId: string): string[] => {
+        const items: string[] = [];
+        let collecting = false;
+        for (const s of structure) {
+            if (s.id === totalId) break;
+            if (s.type === 'subheader') { items.length = 0; collecting = true; }
+            else if (collecting && s.type === 'item') { items.push(s.id); }
+            else if (collecting && (s.type === 'total' || s.type === 'grand_total')) { items.length = 0; }
+        }
+        return items;
+    };
+    const sumItems = (ids: string[], year: 'currentYear' | 'previousYear') =>
+        ids.reduce((s, id) => s + Math.round(getD(id, year)), 0);
+
+    const ncaItems = itemsBefore('total_non_current_assets');
+    const caItems  = itemsBefore('total_current_assets');
+    const eqItems  = itemsBefore('total_equity');
+    const nclItems = itemsBefore('total_non_current_liabilities');
+    const clItems  = itemsBefore('total_current_liabilities');
+
+    const computed: Record<string, { currentYear: number; previousYear: number }> = {};
+    const years = ['currentYear', 'previousYear'] as const;
+    for (const year of years) {
+        const totalNCA = sumItems(ncaItems, year);
+        const totalCA  = sumItems(caItems, year);
+        const totalA   = totalNCA + totalCA;
+        const totalEq  = sumItems(eqItems, year);
+        const totalNCL = sumItems(nclItems, year);
+        const totalCL  = sumItems(clItems, year);
+        const totalL   = totalNCL + totalCL;
+        const totalEL  = Math.abs(totalEq + totalL - totalA) <= 1 ? totalA : (totalEq + totalL);
+
+        const set = (id: string, val: number) => {
+            if (!computed[id]) computed[id] = { currentYear: 0, previousYear: 0 };
+            computed[id][year] = val;
+        };
+        set('total_non_current_assets', totalNCA);
+        set('total_current_assets', totalCA);
+        set('total_assets', totalA);
+        set('total_equity', totalEq);
+        set('total_non_current_liabilities', totalNCL);
+        set('total_current_liabilities', totalCL);
+        set('total_liabilities', totalL);
+        set('total_equity_liabilities', totalEL);
+    }
+
+    return { ...data, ...computed };
+};
+
+export interface BalanceSheetBalanceState {
+    isCurrentYearBalanced: boolean;
+    isPreviousYearBalanced: boolean;
+    isFullyBalanced: boolean;
+    currentYearDiff: number;
+    previousYearDiff: number;
+    totalAssetsCurrent: number;
+    totalEqLiabCurrent: number;
+    totalAssetsPrevious: number;
+    totalEqLiabPrevious: number;
+}
+
+export const computeBalanceState = (
+    data: Record<string, { currentYear: number; previousYear: number }>,
+    structure: BalanceSheetItem[]
+): BalanceSheetBalanceState => {
+    const computed = computeBalanceSheetTotals(data, structure);
+    const totalAssetsCurrent = Math.round(computed['total_assets']?.currentYear || 0);
+    const totalEqLiabCurrent = Math.round(computed['total_equity_liabilities']?.currentYear || 0);
+    const currentYearDiff = Math.abs(totalAssetsCurrent - totalEqLiabCurrent);
+    const isCurrentYearBalanced = currentYearDiff < 1;
+    const totalAssetsPrevious = Math.round(computed['total_assets']?.previousYear || 0);
+    const totalEqLiabPrevious = Math.round(computed['total_equity_liabilities']?.previousYear || 0);
+    const previousYearDiff = Math.abs(totalAssetsPrevious - totalEqLiabPrevious);
+    const isPreviousYearBalanced = previousYearDiff < 1;
+    return {
+        isCurrentYearBalanced,
+        isPreviousYearBalanced,
+        isFullyBalanced: isCurrentYearBalanced && isPreviousYearBalanced,
+        currentYearDiff,
+        previousYearDiff,
+        totalAssetsCurrent,
+        totalEqLiabCurrent,
+        totalAssetsPrevious,
+        totalEqLiabPrevious,
+    };
+};
+
 export const BS_ITEMS: BalanceSheetItem[] = [
     { id: 'assets_header', label: 'Assets', type: 'header' },
     { id: 'non_current_assets_header', label: 'Non-current assets', type: 'subheader' },
@@ -320,75 +412,17 @@ export const BalanceSheetStep: React.FC<BalanceSheetStepProps> = ({
     const sections = structure.filter(i => i.type === 'header' || i.type === 'subheader');
     const builtInItemIds = useMemo(() => new Set(BS_ITEMS.map(item => item.id)), []);
 
-    // Dynamically compute all section totals from structure items (includes injected custom items).
-    const computedData = useMemo(() => {
-        const getD = (id: string, year: 'currentYear' | 'previousYear') => data[id]?.[year] || 0;
+    const computedData = useMemo(() => computeBalanceSheetTotals(data, structure), [structure, data]);
 
-        // Collect item ids that appear between the last subheader and a given total id.
-        const itemsBefore = (totalId: string): string[] => {
-            const items: string[] = [];
-            let collecting = false;
-            for (const s of structure) {
-                if (s.id === totalId) break;
-                if (s.type === 'subheader') { items.length = 0; collecting = true; }
-                else if (collecting && s.type === 'item') { items.push(s.id); }
-                else if (collecting && (s.type === 'total' || s.type === 'grand_total')) { items.length = 0; }
-            }
-            return items;
-        };
-
-        // Round each item to whole integer (matching formatWholeNumber display) before summing,
-        // so section totals equal the sum of the integers actually shown on screen.
-        const sumItems = (ids: string[], year: 'currentYear' | 'previousYear') =>
-            ids.reduce((s, id) => s + Math.round(getD(id, year)), 0);
-
-        const ncaItems = itemsBefore('total_non_current_assets');
-        const caItems  = itemsBefore('total_current_assets');
-        const eqItems  = itemsBefore('total_equity');
-        const nclItems = itemsBefore('total_non_current_liabilities');
-        const clItems  = itemsBefore('total_current_liabilities');
-
-        const computed: Record<string, { currentYear: number; previousYear: number }> = {};
-        const years = ['currentYear', 'previousYear'] as const;
-        for (const year of years) {
-            const totalNCA = sumItems(ncaItems, year);
-            const totalCA  = sumItems(caItems, year);
-            const totalA   = totalNCA + totalCA;
-            const totalEq  = sumItems(eqItems, year);
-            const totalNCL = sumItems(nclItems, year);
-            const totalCL  = sumItems(clItems, year);
-            const totalL   = totalNCL + totalCL;
-            // Reconcile any ≤1 rounding gap so both grand totals show the same number.
-            const totalEL  = Math.abs(totalEq + totalL - totalA) <= 1 ? totalA : (totalEq + totalL);
-
-            const set = (id: string, val: number) => {
-                if (!computed[id]) computed[id] = { currentYear: 0, previousYear: 0 };
-                computed[id][year] = val;
-            };
-            set('total_non_current_assets', totalNCA);
-            set('total_current_assets', totalCA);
-            set('total_assets', totalA);
-            set('total_equity', totalEq);
-            set('total_non_current_liabilities', totalNCL);
-            set('total_current_liabilities', totalCL);
-            set('total_liabilities', totalL);
-            set('total_equity_liabilities', totalEL);
-        }
-
-        return { ...data, ...computed };
-    }, [structure, data]);
-
-    const totalAssetsCurrent = Math.round(computedData['total_assets']?.currentYear || 0);
-    const totalEqLiabCurrent = Math.round(computedData['total_equity_liabilities']?.currentYear || 0);
-    const currentYearDiff = Math.abs(totalAssetsCurrent - totalEqLiabCurrent);
-    const isCurrentYearBalanced = currentYearDiff < 1;
-
-    const totalAssetsPrevious = Math.round(computedData['total_assets']?.previousYear || 0);
-    const totalEqLiabPrevious = Math.round(computedData['total_equity_liabilities']?.previousYear || 0);
-    const previousYearDiff = Math.abs(totalAssetsPrevious - totalEqLiabPrevious);
-    const isPreviousYearBalanced = previousYearDiff < 1;
-
-    const isFullyBalanced = isCurrentYearBalanced && isPreviousYearBalanced;
+    const balanceState = useMemo(() => computeBalanceState(data, structure), [data, structure]);
+    const {
+        isCurrentYearBalanced,
+        isPreviousYearBalanced,
+        isFullyBalanced,
+        currentYearDiff,
+        previousYearDiff,
+        totalAssetsCurrent,
+    } = balanceState;
 
     const handleDownloadPdfClick = () => {
         if (!onDownloadPDF) return;

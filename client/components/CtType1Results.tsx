@@ -61,7 +61,7 @@ import {
     extractTransactionsFromText
 } from '../services/geminiService';
 import { ProfitAndLossStep, PNL_ITEMS } from './ProfitAndLossStep';
-import { BalanceSheetStep, BS_ITEMS } from './BalanceSheetStep';
+import { BalanceSheetStep, BS_ITEMS, computeBalanceState } from './BalanceSheetStep';
 import { initFixedAssetsFromWorkingNotes, isFixedAssetAccount } from './FixedAssetSchedule';
 import { initIntangibleAssetsFromWorkingNotes, isIntangibleAssetAccount } from './IntangibleAssetSchedule';
 import { ctFilingService } from '../services/ctFilingService';
@@ -8114,7 +8114,9 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                     <WorkflowNavigation onBack={handleBack} onNext={handleContinueToBalanceSheet} nextLabel="Confirm & Continue" />
                 </>
             )}
-            {currentStep === 8 && (
+            {currentStep === 8 && (() => {
+                const bsBalance = computeBalanceState(computedValues.bs, bsStructure.length ? bsStructure : BS_ITEMS);
+                return (
                 <>
                     <BalanceSheetStep
                         data={computedValues.bs}
@@ -8132,9 +8134,15 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                         periodEnd={period?.end ? new Date(period.end).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : undefined}
                         previousPeriodEnd={period?.start ? new Date(period.start).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : undefined}
                     />
-                    <WorkflowNavigation onBack={handleBack} onNext={handleContinueToTaxComp} nextLabel="Confirm & Continue" />
+                    <WorkflowNavigation
+                        onBack={handleBack}
+                        onNext={handleContinueToTaxComp}
+                        nextLabel={bsBalance.isFullyBalanced ? 'Confirm & Continue' : 'Balance Required to Continue'}
+                        nextDisabled={!bsBalance.isFullyBalanced}
+                    />
                 </>
-            )}
+                );
+            })()}
             {currentStep === 9 && renderStep9TaxComputation()}
             {currentStep === 10 && renderStep9LOU()}
             {currentStep === 11 && renderStepSignedFsLouUpload()}
