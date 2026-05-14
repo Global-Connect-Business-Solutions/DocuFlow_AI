@@ -1165,6 +1165,13 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
         noteNumberMap.set(item.id, noteNumberMap.get('property_plant_equipment')!);
         continue;
       }
+      // amortisation_intangible shares the intangible-assets note number; no separate section in the PDF.
+      if (item.id === 'amortisation_intangible') {
+        if (noteNumberMap.has('intangible_assets')) {
+          noteNumberMap.set(item.id, noteNumberMap.get('intangible_assets')!);
+        }
+        continue;
+      }
       const hasNotes = Array.isArray(safePnlWorkingNotes[item.id]) && safePnlWorkingNotes[item.id].some(
         (n: any) => hasMeaningfulAmount(n?.currentYearAmount ?? n?.amount ?? 0) || hasMeaningfulAmount(n?.previousYearAmount ?? 0)
       );
@@ -2027,6 +2034,8 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
         if (isBalanceSheetNotes && accountId === 'intangible_assets') return;
         // Depreciation details are already shown in the fixed asset schedule — skip from P&L working notes
         if (!isBalanceSheetNotes && accountId === 'depreciation_ppe') return;
+        // Amortisation on intangible assets does not get its own working-note section
+        if (!isBalanceSheetNotes && accountId === 'amortisation_intangible') return;
 
         const visibleNotes = notes.filter((note) => {
           const curVal = note?.currentYearAmount ?? note?.amount ?? 0;
