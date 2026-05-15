@@ -264,11 +264,14 @@ const resolveFinancialPdfFonts = () => {
   return { regular, bold, italic, boldItalic };
 };
 
-const formatWorkingNoteAmount = (val: number, negativeAsBrackets = false) => {
+const formatWorkingNoteAmount = (val: number, _negativeAsBrackets = false) => {
   const rounded = Math.round(val);
   if (rounded === 0) return "-";
   const formatted = Math.abs(rounded).toLocaleString();
-  if (negativeAsBrackets && rounded < 0) return `(${formatted})`;
+  // Always render negatives with accounting brackets — P&L working notes also carry
+  // signed values now (e.g. Closing Stock comes through as a negative within the
+  // Cost of Revenue breakdown), and dropping the sign would misrepresent the data.
+  if (rounded < 0) return `(${formatted})`;
   return formatted;
 };
 

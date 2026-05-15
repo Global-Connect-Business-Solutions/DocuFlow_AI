@@ -2642,7 +2642,20 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
 
             const netAmount = round2(entry.credit - entry.debit);
             const absAmount = round2(Math.abs(netAmount));
-            if (absAmount === 0) return;
+            // When a grouped TB row's debits and credits cancel out for the year (net = 0),
+            // we must still process the entry so that the per-component working notes for that
+            // year are surfaced. Otherwise the previous-year column in the P&L working notes
+            // collapses to empty even though there are real debit/credit breakdowns behind it.
+            const tbNotesForEntry = tbWorkingNotes[entry.account] || [];
+            const hasNotesForYear = tbNotesForEntry.some(note => {
+                const scope = normalizeTbNoteYearScope(note?.yearScope);
+                if (yearKey === 'currentYear' && scope !== 'current') return false;
+                if (yearKey === 'previousYear' && scope !== 'previous') return false;
+                const noteDebit = Number(note?.debit) || 0;
+                const noteCredit = Number(note?.credit) || 0;
+                return Math.abs(noteDebit) > 0.005 || Math.abs(noteCredit) > 0.005;
+            });
+            if (absAmount === 0 && !hasNotesForYear) return;
             let matched = false;
 
             const pushValue = (key: string) => {
@@ -2652,13 +2665,22 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                     previousYear: round2((pnlMapping[key]?.previousYear || 0) + (yearKey === 'previousYear' ? absAmount : 0))
                 };
                 const tbNotes = tbWorkingNotes[entry.account];
-                const expandedNotes = buildStatementNotesFromTb(tbNotes, yearKey, (note) =>
-                    Math.abs((Number(note.credit) || 0) - (Number(note.debit) || 0))
-                );
+                // Signed amounts so the breakdown matches the parent row:
+                // expenses are debit-normal (debit-credit positive), income/equity-style rows are credit-normal.
+                // This makes credits (e.g. Closing Stock netted against COGS) come through as negative,
+                // and the sum of notes equals the absAmount pushed onto the P&L line.
+                const expandedNotes = buildStatementNotesFromTb(tbNotes, yearKey, (note) => {
+                    const noteDebit = Number(note.debit) || 0;
+                    const noteCredit = Number(note.credit) || 0;
+                    if (normalizedCategory === 'Income') {
+                        return round2(noteCredit - noteDebit);
+                    }
+                    return round2(noteDebit - noteCredit);
+                });
                 if (expandedNotes.length > 0) {
                     if (!pnlNotes[key]) pnlNotes[key] = [];
                     pnlNotes[key].push(...expandedNotes);
-                } else {
+                } else if (absAmount !== 0) {
                     addNote(key, entry.account, absAmount);
                 }
             };
