@@ -5953,10 +5953,54 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
         const AUTO_GROUP_NOTE_PREFIX = '[Auto Grouped Extract] ';
         const shouldGroupDuplicateExtractedRows = !!options?.groupDuplicateExtractedToNotes;
         const yearImportMode = normalizeTbYearImportMode(options?.yearImportMode);
-        const nextTbNotes: Record<string, TbWorkingNoteEntry[]> = shouldGroupDuplicateExtractedRows
-            ? JSON.parse(JSON.stringify(tbWorkingNotes || {}))
-            : tbWorkingNotes;
+        // Always deep-copy: we reconcile existing [Grouped Selected TB] notes against the
+        // re-imported rows below, which mutates nextTbNotes regardless of the
+        // shouldGroupDuplicateExtractedRows toggle.
+        const nextTbNotes: Record<string, TbWorkingNoteEntry[]> = JSON.parse(JSON.stringify(tbWorkingNotes || {}));
         const touchedGroupedAccounts = new Set<string>();
+
+        // Drop duplicate [Grouped Selected TB] notes within each target (same source +
+        // same year scope kept once) — heals state left behind by an earlier append-only
+        // re-group flow — and index every survivor so re-imported rows can refresh the
+        // existing note in place instead of re-appearing as a standalone TB row.
+        const groupedSourceLookup = new Map<string, Array<{ targetAccount: string; scope: TbNoteYearScope; noteIndex: number }>>();
+        const targetsNeedingRowRecompute = new Set<string>();
+        Object.keys(nextTbNotes).forEach((targetAccount) => {
+            const notes = nextTbNotes[targetAccount] || [];
+            const deduped: TbWorkingNoteEntry[] = [];
+            const seen = new Set<string>();
+            let removedAny = false;
+            notes.forEach((note) => {
+                const sourceAccount = extractGroupedTbSourceAccount(note);
+                if (!sourceAccount) {
+                    deduped.push(note);
+                    return;
+                }
+                const key = `${normalizeAccountName(sourceAccount)}|${normalizeTbNoteYearScope(note.yearScope)}`;
+                if (seen.has(key)) {
+                    removedAny = true;
+                    return;
+                }
+                seen.add(key);
+                deduped.push(note);
+            });
+            if (removedAny) {
+                nextTbNotes[targetAccount] = deduped;
+                targetsNeedingRowRecompute.add(targetAccount);
+            }
+            (nextTbNotes[targetAccount] || []).forEach((note, idx) => {
+                const sourceAccount = extractGroupedTbSourceAccount(note);
+                if (!sourceAccount) return;
+                const key = normalizeAccountName(sourceAccount);
+                if (!groupedSourceLookup.has(key)) groupedSourceLookup.set(key, []);
+                groupedSourceLookup.get(key)!.push({
+                    targetAccount,
+                    scope: normalizeTbNoteYearScope(note.yearScope),
+                    noteIndex: idx
+                });
+            });
+        });
+        const refreshedGroupedSources = new Set<string>();
 
         const getNotesForAccount = (accountName: string) => (nextTbNotes[accountName] || []);
         const clearAutoGroupedNotes = (accountName: string) => {
@@ -5993,6 +6037,15 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                 (prev || []).forEach(item => {
                     if (item.account.toLowerCase() !== 'totals') currentMap[item.account.toLowerCase()] = item;
                 });
+            } else {
+                // Re-import never includes the synthetic target row for a user-created
+                // grouping — preserve those rows so the grouping isn't orphaned.
+                const targetAccountsToPreserve = new Set<string>();
+                groupedSourceLookup.forEach(refs => refs.forEach(ref => targetAccountsToPreserve.add(ref.targetAccount)));
+                (prev || []).forEach(item => {
+                    if (item.account.toLowerCase() === 'totals') return;
+                    if (targetAccountsToPreserve.has(item.account)) currentMap[item.account.toLowerCase()] = item;
+                });
             }
 
             const incomingCounts: Record<string, number> = {};
@@ -6007,6 +6060,36 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                 const standardAccounts = Object.keys(CT_REPORTS_ACCOUNTS);
                 const match = standardAccounts.find(sa => sa.toLowerCase() === extracted.account.toLowerCase());
                 if (match) mappedName = match;
+
+                // If the user already grouped this account under a target, refresh the
+                // existing grouped notes with the re-imported amounts and skip adding it
+                // back as a standalone TB row (which otherwise produced a row alongside a
+                // stale grouped note and led to duplicated working-notes entries).
+                const normalizedMappedName = normalizeAccountName(mappedName);
+                const groupedRefs = groupedSourceLookup.get(normalizedMappedName);
+                if (groupedRefs && groupedRefs.length > 0) {
+                    if (!refreshedGroupedSources.has(normalizedMappedName)) {
+                        refreshedGroupedSources.add(normalizedMappedName);
+                        groupedRefs.forEach(ref => {
+                            const targetNotes = nextTbNotes[ref.targetAccount];
+                            const note = targetNotes && targetNotes[ref.noteIndex];
+                            if (!note) return;
+                            if (ref.scope === 'previous') {
+                                note.debit = Math.abs(extractedPreviousDebit);
+                                note.credit = Math.abs(extractedPreviousCredit);
+                                note.groupedSourcePreviousDebit = Number(extracted.previousDebit) || 0;
+                                note.groupedSourcePreviousCredit = Number(extracted.previousCredit) || 0;
+                            } else {
+                                note.debit = Math.abs(baseDebit);
+                                note.credit = Math.abs(baseCredit);
+                                note.groupedSourceDebit = Number(extracted.debit) || 0;
+                                note.groupedSourceCredit = Number(extracted.credit) || 0;
+                            }
+                            targetsNeedingRowRecompute.add(ref.targetAccount);
+                        });
+                    }
+                    return;
+                }
 
                 let finalCategory = extracted.category;
                 const normCat = normalizeOpeningBalanceCategory(extracted.category);
@@ -6069,12 +6152,35 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
                 };
             });
 
+            // Re-derive target row totals for any grouping targets whose notes were
+            // refreshed or deduplicated above.
+            targetsNeedingRowRecompute.forEach((targetAccount) => {
+                const targetKey = targetAccount.toLowerCase();
+                const targetNotes = nextTbNotes[targetAccount] || [];
+                const noteTotals = getTbWorkingNoteTotals(targetNotes);
+                const existing = currentMap[targetKey];
+                const baseAmounts = existing
+                    ? getTbRowBaseAmounts(existing, targetNotes)
+                    : { noteTotals, baseDebit: 0, baseCredit: 0, basePreviousDebit: 0, basePreviousCredit: 0 };
+                currentMap[targetKey] = {
+                    ...(existing || {}),
+                    account: targetAccount,
+                    category: existing?.category || resolveTbSectionLabel(targetAccount),
+                    baseDebit: baseAmounts.baseDebit,
+                    baseCredit: baseAmounts.baseCredit,
+                    basePreviousDebit: baseAmounts.basePreviousDebit,
+                    basePreviousCredit: baseAmounts.basePreviousCredit,
+                    debit: baseAmounts.baseDebit + noteTotals.currentDebit,
+                    credit: baseAmounts.baseCredit + noteTotals.currentCredit,
+                    previousDebit: baseAmounts.basePreviousDebit + noteTotals.previousDebit,
+                    previousCredit: baseAmounts.basePreviousCredit + noteTotals.previousCredit
+                };
+            });
+
             const newEntries = Object.values(currentMap);
             return [...newEntries, buildTbTotalsRow(newEntries)];
         });
-        if (shouldGroupDuplicateExtractedRows) {
-            setTbWorkingNotes(nextTbNotes);
-        }
+        setTbWorkingNotes(nextTbNotes);
         refreshFinancialStatementsFromTb();
     };
 
@@ -6807,7 +6913,16 @@ export const CtType3Results: React.FC<CtType3ResultsProps> = ({
             appendScopeNote('previous', Number(row.previousDebit) || 0, Number(row.previousCredit) || 0);
             return notesForRow;
         });
-        nextTbNotes[targetAccount] = [...targetExistingNotes, ...targetNotesToAppend];
+        // Drop any existing grouped notes under this target whose source matches a row
+        // we're re-grouping — without this, re-applying the same grouping double-stacks
+        // notes (e.g. five entries become ten on a second group click).
+        const incomingSourceKeys = new Set(rowsToMove.map(row => normalizeAccountName(row.account)));
+        const dedupedExistingNotes = targetExistingNotes.filter((note) => {
+            const src = extractGroupedTbSourceAccount(note);
+            if (!src) return true;
+            return !incomingSourceKeys.has(normalizeAccountName(src));
+        });
+        nextTbNotes[targetAccount] = [...dedupedExistingNotes, ...targetNotesToAppend];
 
         rowsToMove.forEach((row) => {
             delete nextTbNotes[row.account];
