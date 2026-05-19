@@ -534,7 +534,17 @@ router.post("/download-pdf", requireAuth, requirePermission(["projects:view", "p
     // Contract: caller passes natural closing balances (RE/SCA before transfer);
     // the server applies the transfer and recomputes equity totals.
     const profitForFinalReturn = (pnlValues?.profit_after_tax?.currentYear) || 0;
-    const openingREForFinal = (bsValues?.retained_earnings?.previousYear) || 0;
+    const closingREBeforeFinalTransfer = (bsValues?.retained_earnings?.currentYear) || 0;
+    const previousYearREClosing = (bsValues?.retained_earnings?.previousYear) || 0;
+    // Derive opening RE from the BS closing minus the period's profit. The client's
+    // auto-note layers profit_after_tax on top of the TB-imported RE balance, so
+    // (closing - profit) recovers the original opening regardless of whether the TB
+    // carried RE in previousYear (multi-year TB) or currentYear (single-year TB).
+    // Falling back to previousYear-only — as before — silently zeroed the opening
+    // for single-year TBs and dropped the RE balance out of the final-return PDF.
+    const openingREForFinal = closingREBeforeFinalTransfer !== 0
+      ? closingREBeforeFinalTransfer - profitForFinalReturn
+      : previousYearREClosing;
     const finalReturnTransfer = isFinalReturn ? -(openingREForFinal + profitForFinalReturn) : 0;
 
     if (isFinalReturn && bsValues) {
