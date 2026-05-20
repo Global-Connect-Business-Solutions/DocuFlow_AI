@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { XMarkIcon } from './icons';
 
 interface KeyboardShortcutsModalProps {
@@ -80,20 +80,31 @@ const Kbd: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ isOpen, onClose }) => {
+    // Hold onClose in a ref so the keydown listener has stable identity and
+    // doesn't get torn down/re-attached on every parent re-render.
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+
     useEffect(() => {
         if (!isOpen) return;
         const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                onCloseRef.current();
+            }
         };
-        document.addEventListener('keydown', handler);
-        // Lock body scroll while modal is open.
+        // Capture phase so we run BEFORE the global hotkeys hook's bubble-phase
+        // listener — guarantees the modal can self-close even if other Esc
+        // handlers are installed.
+        document.addEventListener('keydown', handler, true);
         const prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
         return () => {
-            document.removeEventListener('keydown', handler);
+            document.removeEventListener('keydown', handler, true);
             document.body.style.overflow = prevOverflow;
         };
-    }, [isOpen, onClose]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 

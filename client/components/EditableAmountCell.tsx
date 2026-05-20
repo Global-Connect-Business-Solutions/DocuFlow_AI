@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { evaluateFormula, isFormula } from '../utils/formulaEval';
-import { PencilIcon } from './icons';
 
 const formatDecimal = (n: number) =>
     n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -15,6 +14,9 @@ interface EditableAmountCellProps {
     title?: string;
 }
 
+// Always-input cell. At rest it looks like a styled number; on focus / hover
+// it visibly turns into an editable field. This avoids the click-then-mount
+// race that made the previous button-based cell feel "dead".
 export const EditableAmountCell: React.FC<EditableAmountCellProps> = ({
     value,
     onCommit,
@@ -28,20 +30,10 @@ export const EditableAmountCell: React.FC<EditableAmountCellProps> = ({
     const [draft, setDraft] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
-    useEffect(() => {
-        if (editing) {
-            inputRef.current?.focus();
-            inputRef.current?.select();
-        }
-    }, [editing]);
-
-    const startEdit = (e?: React.MouseEvent | React.KeyboardEvent) => {
-        e?.stopPropagation();
-        setDraft(value > 0 ? String(value) : '');
-        setEditing(true);
-    };
+    const display = value > 0 ? formatDecimal(value) : (placeholderDash ? '-' : '0.00');
 
     const commit = () => {
+        if (!editing) return;
         const raw = draft.trim();
         if (raw === '') {
             onBeforeCommit?.();
@@ -57,49 +49,58 @@ export const EditableAmountCell: React.FC<EditableAmountCellProps> = ({
             setEditing(false);
         } catch (e: any) {
             onError?.(e?.message || 'Invalid expression');
+            // Stay in edit mode so the user can fix.
         }
     };
 
-    const cancel = () => {
-        setEditing(false);
-    };
-
-    if (editing) {
-        return (
-            <input
-                ref={inputRef}
-                type="text"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={commit}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        commit();
-                    } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        cancel();
-                    }
-                }}
-                className={`w-full text-right font-mono bg-background border border-primary/60 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50 ${colorClass}`}
-                placeholder="number or =formula"
-            />
-        );
-    }
+    // When the underlying value changes externally (e.g., undo), reset draft
+    // if not actively editing.
+    useEffect(() => {
+        if (!editing) setDraft('');
+    }, [value, editing]);
 
     return (
-        <button
-            type="button"
-            onClick={startEdit}
-            onMouseDown={(e) => e.stopPropagation()}
+        <input
+            ref={inputRef}
+            type="text"
+            value={editing ? draft : display}
+            placeholder="0.00"
             title={title || 'Click to edit — accepts =formula like =100+50'}
-            className={`group relative w-full flex items-center justify-end gap-1 font-mono text-xs px-1.5 py-1 rounded border border-transparent hover:border-dashed hover:border-primary/50 hover:bg-primary/5 cursor-text transition-colors ${colorClass}`}
-        >
-            <PencilIcon className="w-2.5 h-2.5 opacity-0 group-hover:opacity-50 transition-opacity flex-shrink-0" />
-            <span>{value > 0 ? formatDecimal(value) : placeholderDash ? '-' : '0.00'}</span>
-        </button>
+            onChange={(e) => {
+                if (!editing) setEditing(true);
+                setDraft(e.target.value);
+            }}
+            onFocus={(e) => {
+                setDraft(value > 0 ? String(value) : '');
+                setEditing(true);
+                // Use rAF so the controlled value flips to `draft` before we select.
+                requestAnimationFrame(() => {
+                    e.target.select?.();
+                });
+            }}
+            onBlur={() => {
+                if (editing) commit();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commit();
+                    inputRef.current?.blur();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setEditing(false);
+                    setDraft('');
+                    inputRef.current?.blur();
+                }
+            }}
+            className={`w-full text-right font-mono text-xs px-2 py-1 rounded border bg-transparent cursor-text transition-colors ${
+                editing
+                    ? 'border-primary bg-background ring-2 ring-primary/40 outline-none'
+                    : 'border-dashed border-border/50 hover:border-primary/60 hover:bg-primary/5'
+            } ${colorClass}`}
+        />
     );
 };

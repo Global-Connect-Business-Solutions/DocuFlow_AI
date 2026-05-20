@@ -26,8 +26,24 @@ interface UseHotkeysOptions {
 const isEditableTarget = (el: EventTarget | null): boolean => {
     if (!(el instanceof HTMLElement)) return false;
     const tag = el.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+    if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
     if (el.isContentEditable) return true;
+    if (tag === 'INPUT') {
+        // Only true text-entry inputs should suppress shortcuts; checkboxes /
+        // radios / buttons stealing focus on click shouldn't disable Ctrl+Shift+X.
+        const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
+        if (
+            type === 'checkbox' ||
+            type === 'radio' ||
+            type === 'button' ||
+            type === 'submit' ||
+            type === 'reset' ||
+            type === 'file'
+        ) {
+            return false;
+        }
+        return true;
+    }
     return false;
 };
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
     ChevronDownIcon,
@@ -28,6 +28,12 @@ interface CategoryDropdownProps {
     showAllOption?: boolean;
 }
 
+// A single entry in the flat keyboard-navigable list.
+interface FlatOption {
+    value: string;            // value passed to onChange()
+    label: string;
+}
+
 export const CategoryDropdown = ({
     value,
     onChange,
@@ -40,71 +46,75 @@ export const CategoryDropdown = ({
     const [isOpen, setIsOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [menuStyle, setMenuStyle] = useState<{ top: number; left: number; width: number } | null>(null);
+    const [highlightedIndex, setHighlightedIndex] = useState(0);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const portalMenuRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const openTimestampRef = useRef<number>(0);
 
-    // Calculate position when opening
-    useEffect(() => {
-        if (isOpen && dropdownRef.current) {
-            const rect = dropdownRef.current.getBoundingClientRect();
-            setMenuStyle({
-                top: rect.bottom + window.scrollY,
-                left: rect.left + window.scrollX,
-                width: rect.width
-            });
-            setSearchTerm('');
-            openTimestampRef.current = Date.now();
-
-            // Focus search input after render
-            setTimeout(() => {
-                if (searchInputRef.current) searchInputRef.current.focus();
-            }, 50);
-        }
-    }, [isOpen]);
-
-    // Handle clicking outside and scroll/resize - ONLY when open
+    // Open: reset internal state, focus search, and install scroll/resize
+    // listeners that keep the menu glued to the trigger. The menu uses
+    // position:fixed (viewport coords) so we just need to mirror the trigger's
+    // getBoundingClientRect on every relevant event.
     useEffect(() => {
         if (!isOpen) return;
 
+        const computeStyle = () => {
+            if (!dropdownRef.current) return null;
+            const rect = dropdownRef.current.getBoundingClientRect();
+            return {
+                top: rect.bottom,
+                left: rect.left,
+                width: rect.width,
+                rect,
+            };
+        };
+
+        const apply = () => {
+            const s = computeStyle();
+            if (!s) return;
+            // If the trigger has been scrolled fully off-screen, dismiss.
+            if (s.rect.bottom < -2 || s.rect.top > window.innerHeight + 2) {
+                setIsOpen(false);
+                return;
+            }
+            setMenuStyle({ top: s.top, left: s.left, width: s.width });
+        };
+
+        apply();
+        setSearchTerm('');
+        setHighlightedIndex(0);
+        openTimestampRef.current = Date.now();
+        setTimeout(() => {
+            if (searchInputRef.current) searchInputRef.current.focus();
+        }, 50);
+
+        const handleScroll = (event: Event) => {
+            // Ignore scrolls that happen INSIDE the menu itself — those are
+            // caused by our own arrow-key scrollIntoView and shouldn't trigger
+            // a reposition.
+            if (portalMenuRef.current && portalMenuRef.current.contains(event.target as Node)) {
+                return;
+            }
+            apply();
+        };
+
         const handleMouseDown = (event: MouseEvent) => {
             const target = event.target as Node;
-            // Check if click is inside dropdown button
-            if (dropdownRef.current && dropdownRef.current.contains(target)) {
-                return;
-            }
-            // Check if click is inside the portal menu
-            if (portalMenuRef.current && portalMenuRef.current.contains(target)) {
-                return;
-            }
+            if (dropdownRef.current && dropdownRef.current.contains(target)) return;
+            if (portalMenuRef.current && portalMenuRef.current.contains(target)) return;
             setIsOpen(false);
         };
 
-        // Close on scroll or resize to prevent floating menu issues
-        const handleScrollOrResize = (event: Event) => {
-            // Ignore scroll events that fire immediately after opening (browser layout adjustments)
-            if (Date.now() - openTimestampRef.current < 150) return;
-
-            const target = event.target as Node;
-            // Allow scrolling inside the portal menu itself
-            if (portalMenuRef.current && portalMenuRef.current.contains(target)) {
-                return;
-            }
-            setIsOpen(false);
-        };
-
-        const handleResize = () => {
-            setIsOpen(false);
-        };
+        const handleResize = () => apply();
 
         document.addEventListener('mousedown', handleMouseDown);
-        window.addEventListener('scroll', handleScrollOrResize, true);
+        window.addEventListener('scroll', handleScroll, true);
         window.addEventListener('resize', handleResize);
 
         return () => {
             document.removeEventListener('mousedown', handleMouseDown);
-            window.removeEventListener('scroll', handleScrollOrResize, true);
+            window.removeEventListener('scroll', handleScroll, true);
             window.removeEventListener('resize', handleResize);
         };
     }, [isOpen]);
@@ -114,10 +124,115 @@ export const CategoryDropdown = ({
     const isUncategorized = (value === 'UNCATEGORIZED' || (value && value.toLowerCase().includes('uncategorized'))) && value !== 'ALL';
     const currentLabel = value === 'ALL' ? 'All Categories' : (isUncategorized ? 'Uncategorized' : getChildCategory(value) || placeholder);
 
+    // Build the flat option list in display order — single source of truth for both
+    // the visual render and keyboard navigation. Order MUST match the render below.
+    const flatOptions = useMemo<FlatOption[]>(() => {
+        const out: FlatOption[] = [];
+
+        if (showAllOption && matchesSearch('All Categories')) {
+            out.push({ value: 'ALL', label: 'All Categories' });
+        }
+        if (matchesSearch('Uncategorized')) {
+            out.push({ value: 'UNCATEGORIZED', label: 'Uncategorized' });
+        }
+        out.push({ value: '__NEW__', label: 'Add New Category' });
+
+        const visibleBanks = bankCategories.filter(c => matchesSearch(c));
+        visibleBanks.forEach(c => out.push({ value: c, label: getChildCategory(c) }));
+
+        Object.entries(CHART_OF_ACCOUNTS).forEach(([mainCategory, sub]) => {
+            const relatedCustom = customCategories.filter(c => c.startsWith(`${mainCategory} |`) && matchesSearch(c));
+            const standardOptions: string[] = [];
+            if (Array.isArray(sub)) {
+                sub.forEach(item => standardOptions.push(`${mainCategory} | ${item}`));
+            } else if (typeof sub === 'object') {
+                Object.entries(sub).forEach(([subGroup, items]) =>
+                    (items as string[]).forEach(item => standardOptions.push(`${mainCategory} | ${subGroup} | ${item}`))
+                );
+            }
+            const visibleStandard = standardOptions.filter(c => matchesSearch(c));
+
+            relatedCustom.forEach(c => out.push({ value: c, label: `${getChildCategory(c)} (Custom)` }));
+            visibleStandard.forEach(c => out.push({ value: c, label: getChildCategory(c) }));
+        });
+
+        const orphans = customCategories.filter(
+            c => !Object.keys(CHART_OF_ACCOUNTS).some(root => c.startsWith(`${root} |`)) && matchesSearch(c),
+        );
+        orphans.forEach(c => out.push({ value: c, label: `${getChildCategory(c)} (Custom)` }));
+
+        return out;
+    }, [searchTerm, customCategories, bankCategories, showAllOption]);
+
+    // Keep highlightedIndex valid as the filter narrows.
+    useEffect(() => {
+        if (highlightedIndex >= flatOptions.length) {
+            setHighlightedIndex(Math.max(0, flatOptions.length - 1));
+        }
+    }, [flatOptions.length, highlightedIndex]);
+    useEffect(() => { setHighlightedIndex(0); }, [searchTerm]);
+
+    // Scroll the highlighted option into view by adjusting only the menu's
+    // internal scroll container — never the window. (scrollIntoView climbs
+    // ancestors and can scroll the page, which used to close the dropdown.)
+    useEffect(() => {
+        if (!isOpen) return;
+        const menu = portalMenuRef.current;
+        if (!menu) return;
+        const item = menu.querySelector<HTMLElement>(`[data-option-index="${highlightedIndex}"]`);
+        if (!item) return;
+        const scrollContainer = item.closest<HTMLElement>('.custom-scrollbar') || menu;
+        const itemRect = item.getBoundingClientRect();
+        const containerRect = scrollContainer.getBoundingClientRect();
+        if (itemRect.top < containerRect.top) {
+            scrollContainer.scrollTop -= containerRect.top - itemRect.top;
+        } else if (itemRect.bottom > containerRect.bottom) {
+            scrollContainer.scrollTop += itemRect.bottom - containerRect.bottom;
+        }
+    }, [highlightedIndex, isOpen]);
+
+    const commitOption = (opt: FlatOption | undefined) => {
+        if (!opt) return;
+        onChange(opt.value);
+        setIsOpen(false);
+    };
+
+    const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        // Stop dropdown nav keys from bubbling up to the global hotkeys hook.
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            e.stopPropagation();
+            setHighlightedIndex(i => Math.min(Math.max(0, flatOptions.length - 1), i + 1));
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            e.stopPropagation();
+            setHighlightedIndex(i => Math.max(0, i - 1));
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            commitOption(flatOptions[highlightedIndex]);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            setIsOpen(false);
+        } else if (e.key === 'Home') {
+            e.preventDefault();
+            e.stopPropagation();
+            setHighlightedIndex(0);
+        } else if (e.key === 'End') {
+            e.preventDefault();
+            e.stopPropagation();
+            setHighlightedIndex(Math.max(0, flatOptions.length - 1));
+        }
+    };
+
+    // Map a value to its flat-list index so we can apply the highlight class.
+    const indexOfValue = (v: string) => flatOptions.findIndex(o => o.value === v);
+
     const menuContent = (
         <div
             ref={portalMenuRef}
-            className="absolute z-[9999] mt-1 bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-150"
+            className="fixed z-[9999] mt-1 bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-150"
             style={{
                 top: menuStyle?.top,
                 left: menuStyle?.left,
@@ -135,6 +250,7 @@ export const CategoryDropdown = ({
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         onClick={(e) => e.stopPropagation()}
+                        onKeyDown={handleSearchKeyDown}
                     />
                 </div>
             </div>
@@ -142,38 +258,62 @@ export const CategoryDropdown = ({
             <div className="max-h-[320px] overflow-y-auto custom-scrollbar overflow-x-hidden">
                 {/* Static Actions */}
                 <div className="p-1 space-y-0.5">
-                    {showAllOption && matchesSearch('All Categories') && (
-                        <button
-                            type="button"
-                            onClick={() => { onChange('ALL'); setIsOpen(false); }}
-                            className={`w-full text-left px-3 py-2 rounded-lg text-[11px] font-bold transition-colors ${value === 'ALL'
-                                ? 'bg-primary text-primary-foreground'
-                                : 'text-foreground hover:bg-accent hover:text-accent-foreground'
-                                }`}
-                        >
-                            All Categories
-                        </button>
-                    )}
-                    {matchesSearch('Uncategorized') && (
-                        <button
-                            type="button"
-                            onClick={() => { onChange('UNCATEGORIZED'); setIsOpen(false); }}
-                            className={`w-full text-left px-3 py-2 rounded-lg text-[11px] font-bold italic transition-colors ${value === 'UNCATEGORIZED'
-                                ? 'bg-destructive/15 text-destructive'
-                                : 'text-destructive/90 hover:bg-destructive/10 hover:text-destructive'
-                                }`}
-                        >
-                            Uncategorized
-                        </button>
-                    )}
-                    <button
-                        type="button"
-                        onClick={() => { onChange('__NEW__'); setIsOpen(false); }}
-                        className="w-full text-left px-3 py-2 rounded-lg text-[11px] text-primary font-bold transition-colors flex items-center gap-2 hover:bg-accent hover:text-accent-foreground"
-                    >
-                        <PlusIcon className="w-3.5 h-3.5" />
-                        Add New Category
-                    </button>
+                    {showAllOption && matchesSearch('All Categories') && (() => {
+                        const idx = indexOfValue('ALL');
+                        const highlighted = idx === highlightedIndex;
+                        return (
+                            <button
+                                type="button"
+                                data-option-index={idx}
+                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                onClick={() => { onChange('ALL'); setIsOpen(false); }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-[11px] font-bold transition-colors ${value === 'ALL'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : highlighted
+                                        ? 'bg-accent text-accent-foreground'
+                                        : 'text-foreground hover:bg-accent hover:text-accent-foreground'
+                                    }`}
+                            >
+                                All Categories
+                            </button>
+                        );
+                    })()}
+                    {matchesSearch('Uncategorized') && (() => {
+                        const idx = indexOfValue('UNCATEGORIZED');
+                        const highlighted = idx === highlightedIndex;
+                        return (
+                            <button
+                                type="button"
+                                data-option-index={idx}
+                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                onClick={() => { onChange('UNCATEGORIZED'); setIsOpen(false); }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-[11px] font-bold italic transition-colors ${value === 'UNCATEGORIZED'
+                                    ? 'bg-destructive/15 text-destructive'
+                                    : highlighted
+                                        ? 'bg-accent text-accent-foreground'
+                                        : 'text-destructive/90 hover:bg-destructive/10 hover:text-destructive'
+                                    }`}
+                            >
+                                Uncategorized
+                            </button>
+                        );
+                    })()}
+                    {(() => {
+                        const idx = indexOfValue('__NEW__');
+                        const highlighted = idx === highlightedIndex;
+                        return (
+                            <button
+                                type="button"
+                                data-option-index={idx}
+                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                onClick={() => { onChange('__NEW__'); setIsOpen(false); }}
+                                className={`w-full text-left px-3 py-2 rounded-lg text-[11px] text-primary font-bold transition-colors flex items-center gap-2 ${highlighted ? 'bg-accent' : 'hover:bg-accent hover:text-accent-foreground'}`}
+                            >
+                                <PlusIcon className="w-3.5 h-3.5" />
+                                Add New Category
+                            </button>
+                        );
+                    })()}
                 </div>
 
                 <div className="h-px bg-border my-1 mx-2" />
@@ -191,19 +331,27 @@ export const CategoryDropdown = ({
                                         Bank Accounts
                                     </div>
                                     <div className="space-y-0.5">
-                                        {visibleBanks.map(c => (
-                                            <button
-                                                key={c}
-                                                type="button"
-                                                onClick={() => { onChange(c); setIsOpen(false); }}
-                                                className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
-                                                    ? 'bg-primary text-primary-foreground font-bold'
-                                                    : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground'
-                                                    }`}
-                                            >
-                                                {getChildCategory(c)}
-                                            </button>
-                                        ))}
+                                        {visibleBanks.map(c => {
+                                            const idx = indexOfValue(c);
+                                            const highlighted = idx === highlightedIndex;
+                                            return (
+                                                <button
+                                                    key={c}
+                                                    type="button"
+                                                    data-option-index={idx}
+                                                    onMouseEnter={() => setHighlightedIndex(idx)}
+                                                    onClick={() => { onChange(c); setIsOpen(false); }}
+                                                    className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
+                                                        ? 'bg-primary text-primary-foreground font-bold'
+                                                        : highlighted
+                                                            ? 'bg-accent text-accent-foreground'
+                                                            : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground'
+                                                        }`}
+                                                >
+                                                    {getChildCategory(c)}
+                                                </button>
+                                            );
+                                        })}
                                     </div>
                                 </div>
                             </div>
@@ -242,33 +390,49 @@ export const CategoryDropdown = ({
                                 </div>
 
                                 <div className="space-y-0.5">
-                                    {relatedCustom.map(c => (
-                                        <button
-                                            key={c}
-                                            type="button"
-                                            onClick={() => { onChange(c); setIsOpen(false); }}
-                                            className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
-                                                ? 'bg-primary text-primary-foreground font-bold'
-                                                : 'text-foreground hover:bg-accent hover:text-accent-foreground'
-                                                }`}
-                                        >
-                                            {getChildCategory(c)} (Custom)
-                                        </button>
-                                    ))}
+                                    {relatedCustom.map(c => {
+                                        const idx = indexOfValue(c);
+                                        const highlighted = idx === highlightedIndex;
+                                        return (
+                                            <button
+                                                key={c}
+                                                type="button"
+                                                data-option-index={idx}
+                                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                                onClick={() => { onChange(c); setIsOpen(false); }}
+                                                className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
+                                                    ? 'bg-primary text-primary-foreground font-bold'
+                                                    : highlighted
+                                                        ? 'bg-accent text-accent-foreground'
+                                                        : 'text-foreground hover:bg-accent hover:text-accent-foreground'
+                                                    }`}
+                                            >
+                                                {getChildCategory(c)} (Custom)
+                                            </button>
+                                        );
+                                    })}
 
-                                    {visibleStandard.map(c => (
-                                        <button
-                                            key={c}
-                                            type="button"
-                                            onClick={() => { onChange(c); setIsOpen(false); }}
-                                            className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
-                                                ? 'bg-primary text-primary-foreground font-bold'
-                                                : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground'
-                                                }`}
-                                        >
-                                            {getChildCategory(c)}
-                                        </button>
-                                    ))}
+                                    {visibleStandard.map(c => {
+                                        const idx = indexOfValue(c);
+                                        const highlighted = idx === highlightedIndex;
+                                        return (
+                                            <button
+                                                key={c}
+                                                type="button"
+                                                data-option-index={idx}
+                                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                                onClick={() => { onChange(c); setIsOpen(false); }}
+                                                className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
+                                                    ? 'bg-primary text-primary-foreground font-bold'
+                                                    : highlighted
+                                                        ? 'bg-accent text-accent-foreground'
+                                                        : 'text-foreground/80 hover:bg-accent hover:text-accent-foreground'
+                                                    }`}
+                                            >
+                                                {getChildCategory(c)}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         );
@@ -284,19 +448,27 @@ export const CategoryDropdown = ({
                                     Others
                                 </div>
                                 <div className="space-y-0.5">
-                                    {orphans.map(c => (
-                                        <button
-                                            key={c}
-                                            type="button"
-                                            onClick={() => { onChange(c); setIsOpen(false); }}
-                                            className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
-                                                ? 'bg-primary text-primary-foreground font-bold'
-                                                : 'text-foreground hover:bg-accent hover:text-accent-foreground'
-                                                }`}
-                                        >
-                                            {getChildCategory(c)} (Custom)
-                                        </button>
-                                    ))}
+                                    {orphans.map(c => {
+                                        const idx = indexOfValue(c);
+                                        const highlighted = idx === highlightedIndex;
+                                        return (
+                                            <button
+                                                key={c}
+                                                type="button"
+                                                data-option-index={idx}
+                                                onMouseEnter={() => setHighlightedIndex(idx)}
+                                                onClick={() => { onChange(c); setIsOpen(false); }}
+                                                className={`w-full text-left px-8 py-1.5 rounded-lg text-[11px] transition-colors ${value === c
+                                                    ? 'bg-primary text-primary-foreground font-bold'
+                                                    : highlighted
+                                                        ? 'bg-accent text-accent-foreground'
+                                                        : 'text-foreground hover:bg-accent hover:text-accent-foreground'
+                                                    }`}
+                                            >
+                                                {getChildCategory(c)} (Custom)
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         );

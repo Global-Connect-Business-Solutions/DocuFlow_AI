@@ -35,6 +35,8 @@ interface UseReviewCategorizeShortcutsArgs<T extends NavRow> {
     handlers: ShortcutHandlers;
     toast: ToastApi;
     openHelp: () => void;
+    closeHelp?: () => void;       // for global Esc fallback
+    isHelpOpen?: boolean;         // for global Esc fallback
     allFilteredCount?: number;    // total rows across all pages (for select-all)
     allFilteredRows?: T[];        // optional: full filtered list for select-all
 }
@@ -55,6 +57,8 @@ export function useReviewCategorizeShortcuts<T extends NavRow>(
         handlers,
         toast,
         openHelp,
+        closeHelp,
+        isHelpOpen,
         allFilteredRows,
     } = args;
 
@@ -62,8 +66,8 @@ export function useReviewCategorizeShortcuts<T extends NavRow>(
     const anchorRef = useRef<number | null>(null);
 
     // Keep latest values readable inside stable callbacks.
-    const stateRef = useRef({ filteredTransactions, activeRowIndex, selectedIndices, bulkCategory });
-    stateRef.current = { filteredTransactions, activeRowIndex, selectedIndices, bulkCategory };
+    const stateRef = useRef({ filteredTransactions, activeRowIndex, selectedIndices, bulkCategory, isHelpOpen });
+    stateRef.current = { filteredTransactions, activeRowIndex, selectedIndices, bulkCategory, isHelpOpen };
 
     const clampIndex = (i: number) => {
         const len = stateRef.current.filteredTransactions.length;
@@ -135,15 +139,68 @@ export function useReviewCategorizeShortcuts<T extends NavRow>(
         scrollActiveIntoView(next);
     };
 
+    // Track whether we've shown the one-time "what did Space do?" hint.
+    const spaceHintShownRef = useRef(false);
+
     const toggleActiveSelection = () => {
         const { filteredTransactions, activeRowIndex, selectedIndices } = stateRef.current;
-        if (activeRowIndex === null || !filteredTransactions[activeRowIndex]) return;
-        const oi = filteredTransactions[activeRowIndex].originalIndex;
+        if (filteredTransactions.length === 0) return;
+        // If nothing is active yet, default to the FIRST row (not the last) and
+        // toggle its selection. This matches what the user expects: Space →
+        // "select the row I'm looking at" — and the first visible row is the
+        // natural starting point on an unblemished view.
+        const idx = activeRowIndex ?? 0;
+        if (!filteredTransactions[idx]) return;
+        if (activeRowIndex === null) {
+            setActiveRowIndex(idx);
+            scrollActiveIntoView(idx);
+        }
+        const oi = filteredTransactions[idx].originalIndex;
         const newSet = new Set(selectedIndices);
         if (newSet.has(oi)) newSet.delete(oi);
         else newSet.add(oi);
         setSelectedIndices(newSet);
-        anchorRef.current = activeRowIndex;
+        anchorRef.current = idx;
+
+        if (!spaceHintShownRef.current) {
+            spaceHintShownRef.current = true;
+            toast.info(
+                'Selected. Press Ctrl+Enter to apply category, Del to delete, or Space again to deselect.',
+                { duration: 5000 },
+            );
+        }
+    };
+
+    // Tab navigation between editable cells inside the active row.
+    // Returns true if Tab was handled (caller should preventDefault).
+    const focusNextCellInActiveRow = (dir: 1 | -1): boolean => {
+        const activeTr = document.querySelector<HTMLTableRowElement>('tr[data-active="true"]');
+        if (!activeTr) return false;
+        const selector = 'button, input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]):not([type="reset"])';
+        const cells = Array.from(activeTr.querySelectorAll<HTMLElement>(selector))
+            .filter(el => !el.hasAttribute('disabled') && el.offsetParent !== null);
+        if (cells.length === 0) return false;
+
+        const current = document.activeElement as HTMLElement | null;
+        const currentIdx = current ? cells.indexOf(current) : -1;
+        const nextIdx = currentIdx === -1 ? (dir === 1 ? 0 : cells.length - 1) : currentIdx + dir;
+
+        if (nextIdx < 0 || nextIdx >= cells.length) {
+            // Past the end — move active row in that direction, then focus
+            // the first/last cell of the new active row after re-render.
+            moveActive(dir, false);
+            requestAnimationFrame(() => {
+                const newActive = document.querySelector<HTMLTableRowElement>('tr[data-active="true"]');
+                if (!newActive) return;
+                const newCells = Array.from(newActive.querySelectorAll<HTMLElement>(selector))
+                    .filter(el => !el.hasAttribute('disabled') && el.offsetParent !== null);
+                if (newCells.length === 0) return;
+                (dir === 1 ? newCells[0] : newCells[newCells.length - 1]).focus();
+            });
+            return true;
+        }
+        cells[nextIdx].focus();
+        return true;
     };
 
     const selectAllFiltered = () => {
@@ -234,6 +291,23 @@ export function useReviewCategorizeShortcuts<T extends NavRow>(
         'arrowup': () => moveActive(-1, false),
         'shift+arrowdown': () => moveActive(1, true),
         'shift+arrowup': () => moveActive(-1, true),
+        // Tab through editable cells in the active row.
+        // preventDefault: false so we can fall through to default browser Tab
+        // when there's no active row.
+        'tab': {
+            handler: (e) => {
+                if (focusNextCellInActiveRow(1)) e.preventDefault();
+            },
+            allowInInputs: true,
+            preventDefault: false,
+        },
+        'shift+tab': {
+            handler: (e) => {
+                if (focusNextCellInActiveRow(-1)) e.preventDefault();
+            },
+            allowInInputs: true,
+            preventDefault: false,
+        },
         // Page nav — flips pages when pagination is wired
         'pagedown': () => tryNextPage(),
         'pageup': () => tryPrevPage(),
@@ -243,6 +317,12 @@ export function useReviewCategorizeShortcuts<T extends NavRow>(
         'ctrl+a': () => selectAllFiltered(),
         'escape': {
             handler: () => {
+                // Priority 1: close the help modal if open. This is a backup —
+                // the modal also installs its own Esc listener.
+                if (stateRef.current.isHelpOpen && closeHelp) {
+                    closeHelp();
+                    return;
+                }
                 if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                 clearSelection();
             },

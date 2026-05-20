@@ -1238,13 +1238,9 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
     const [reviewPage, setReviewPage] = useState(0);
     const [reviewPageSize, setReviewPageSize] = useState(50);
     const reviewToast = useToast();
-    const editedTransactionsRef = useRef<Transaction[]>([]);
-    useEffect(() => {
-        editedTransactionsRef.current = editedTransactions;
-    }, [editedTransactions]);
     const reviewHistory = useUndoableHistory<Transaction[]>(
-        () => editedTransactionsRef.current,
-        (snap) => setEditedTransactions(snap),
+        editedTransactions,
+        setEditedTransactions,
         50,
     );
 
@@ -5808,6 +5804,8 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
         },
         toast: reviewToast,
         openHelp: () => setShowShortcutsHelp(true),
+        closeHelp: () => setShowShortcutsHelp(false),
+        isHelpOpen: showShortcutsHelp,
     });
 
     // Reset active row when the page set shrinks below it.
@@ -6404,7 +6402,6 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                                                 key={t.originalIndex}
                                                 data-row-index={rowIdx}
                                                 data-active={isActiveRow}
-                                                onClick={() => setActiveRowIndex(rowIdx)}
                                                 className={`border-b border-border hover:bg-muted/50 ${selectedIndices.has(t.originalIndex) ? 'bg-primary/10' : ''} ${isActiveRow ? 'ring-2 ring-inset ring-primary/60' : ''}`}
                                             >
                                                 <td className="px-4 py-2">
@@ -6415,8 +6412,17 @@ export const CtType1Results: React.FC<CtType1ResultsProps> = ({
                                                         className="rounded border-border bg-muted/80 text-primary focus:ring-primary"
                                                     />
                                                 </td>
-                                                <td className="px-4 py-2 whitespace-nowrap text-xs">{formatDate(t.date)}</td>
-                                                <td className="px-4 py-2 text-foreground max-w-xs truncate" title={typeof t.description === 'string' ? t.description : JSON.stringify(t.description)}>
+                                                <td
+                                                    className="px-4 py-2 whitespace-nowrap text-xs cursor-pointer"
+                                                    onClick={() => setActiveRowIndex(rowIdx)}
+                                                >
+                                                    {formatDate(t.date)}
+                                                </td>
+                                                <td
+                                                    className="px-4 py-2 text-foreground max-w-xs truncate cursor-pointer"
+                                                    title={typeof t.description === 'string' ? t.description : JSON.stringify(t.description)}
+                                                    onClick={() => setActiveRowIndex(rowIdx)}
+                                                >
                                                     {typeof t.description === 'string' ? t.description : JSON.stringify(t.description)}
                                                 </td>
                                                 <td className="px-4 py-2 text-right font-mono">
