@@ -47,6 +47,14 @@ import {
     CloudArrowUpIcon
 } from './icons';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useToast } from '../contexts/ToastContext';
+import { useUndoableHistory } from '../hooks/useUndoableHistory';
+import { useReviewCategorizeShortcuts } from '../hooks/useReviewCategorizeShortcuts';
+import { EditableAmountCell } from './EditableAmountCell';
+import { SelectionStatusBar } from './SelectionStatusBar';
+import { CategoryTotalsPanel } from './CategoryTotalsPanel';
+import { KeyboardShortcutsModal } from './KeyboardShortcutsModal';
+import { TablePagination } from './TablePagination';
 import { createPortal } from 'react-dom';
 import { PdfPreviewModal } from './PdfPreviewModal';
 
@@ -1363,6 +1371,25 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
     const obExcelInputRef = useRef<HTMLInputElement>(null);
     const importStep1InputRef = useRef<HTMLInputElement>(null);
     const importStep4InputRef = useRef<HTMLInputElement>(null);
+
+    // --- Review Categorize: Excel-like shortcuts, history, status bar ---
+    const reviewSearchInputRef = useRef<HTMLInputElement>(null);
+    const reviewFilterDropdownRef = useRef<HTMLDivElement>(null);
+    const [activeRowIndex, setActiveRowIndex] = useState<number | null>(null);
+    const [showCategoryTotals, setShowCategoryTotals] = useState(false);
+    const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+    const [reviewPage, setReviewPage] = useState(0);
+    const [reviewPageSize, setReviewPageSize] = useState(50);
+    const reviewToast = useToast();
+    const editedTransactionsRef = useRef<Transaction[]>([]);
+    const reviewHistory = useUndoableHistory<Transaction[]>(
+        () => editedTransactionsRef.current,
+        (snap) => setEditedTransactions(snap),
+        50,
+    );
+    useEffect(() => {
+        editedTransactionsRef.current = editedTransactions;
+    }, [editedTransactions]);
     const [excelInvoiceFiles, setExcelInvoiceFiles] = useState<File[]>([]);
     const [additionalInvoiceFiles, setAdditionalInvoiceFiles] = useState<File[]>([]);
     const [isExtractingAdditionalInvoices, setIsExtractingAdditionalInvoices] = useState(false);
@@ -2011,6 +2038,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
         const rate = parseFloat(rateValue);
         if (isNaN(rate) || rate <= 0) return;
 
+        reviewHistory.pushHistory(`Convert ${fileName} @ ${rate}`);
         setEditedTransactions(prev => {
             return prev.map(t => {
                 if (t.sourceFile === fileName) {
@@ -3370,6 +3398,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
             setShowAddCategoryModal(true);
         } else {
             if (context.type === 'row' && context.rowIndex !== undefined) {
+                reviewHistory.pushHistory('Change row category');
                 setEditedTransactions(prev => {
                     const updated = [...prev];
                     updated[context.rowIndex!] = { ...updated[context.rowIndex!], category: value };
@@ -3468,6 +3497,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
 
     const handleAutoCategorize = useCallback(async () => {
         if (editedTransactions.length === 0) return;
+        reviewHistory.pushHistory('Auto-label categories');
         // Fix: Use the declared setIsAutoCategorizing
         setIsAutoCategorizing(true);
         try {
@@ -3517,6 +3547,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
 
     const handleBulkApplyCategory = useCallback(() => {
         if (!bulkCategory || selectedIndices.size === 0) return;
+        reviewHistory.pushHistory(`Apply category to ${selectedIndices.size} rows`);
         setEditedTransactions(prev => {
             const updated = [...prev];
             selectedIndices.forEach(idx => {
@@ -3534,12 +3565,14 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
         if (!window.confirm(`Are you sure you want to delete ${count} selected transaction${count === 1 ? '' : 's'}?`)) {
             return;
         }
+        reviewHistory.pushHistory(`Delete ${count} rows`);
         setEditedTransactions(prev => prev.filter((_, idx) => !selectedIndices.has(idx)));
         setSelectedIndices(new Set());
     }, [selectedIndices]);
 
     const handleBulkSwap = useCallback(() => {
         if (selectedIndices.size === 0) return;
+        reviewHistory.pushHistory(`Swap Debit/Credit on ${selectedIndices.size} rows`);
         setEditedTransactions(prev => prev.map((t, i) => {
             if (selectedIndices.has(i)) {
                 return {
@@ -3557,6 +3590,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
 
     const handleDeleteTransaction = useCallback((index: number) => {
         if (window.confirm("Are you sure you want to delete this transaction?")) {
+            reviewHistory.pushHistory('Delete row');
             setEditedTransactions(prev => prev.filter((_, i) => i !== index));
             setSelectedIndices(prev => {
                 const newSet = new Set<number>();
@@ -5463,6 +5497,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
     };
 
     const handleSwapDebitCredit = (originalIndex: number) => {
+        reviewHistory.pushHistory('Swap Debit/Credit');
         setEditedTransactions(prev => {
             const updated = [...prev];
             const t = { ...updated[originalIndex] };
@@ -5483,6 +5518,69 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
             return updated;
         });
     };
+
+    // Pagination — slice filteredTransactions for the table.
+    const reviewPageCount = reviewPageSize === 0
+        ? 1
+        : Math.max(1, Math.ceil(filteredTransactions.length / reviewPageSize));
+    const pagedTransactions = useMemo(() => {
+        if (reviewPageSize === 0) return filteredTransactions;
+        const start = reviewPage * reviewPageSize;
+        return filteredTransactions.slice(start, start + reviewPageSize);
+    }, [filteredTransactions, reviewPage, reviewPageSize]);
+
+    useEffect(() => { setReviewPage(0); }, [searchTerm, filterCategory, selectedFileFilter]);
+    useEffect(() => {
+        if (reviewPage >= reviewPageCount) setReviewPage(Math.max(0, reviewPageCount - 1));
+    }, [reviewPageCount, reviewPage]);
+
+    const goNextReviewPage = useCallback((): boolean => {
+        if (reviewPageSize === 0 || reviewPage >= reviewPageCount - 1) return false;
+        setReviewPage(p => Math.min(reviewPageCount - 1, p + 1));
+        return true;
+    }, [reviewPage, reviewPageCount, reviewPageSize]);
+
+    const goPrevReviewPage = useCallback((): boolean => {
+        if (reviewPageSize === 0 || reviewPage <= 0) return false;
+        setReviewPage(p => Math.max(0, p - 1));
+        return true;
+    }, [reviewPage, reviewPageSize]);
+
+    // Bind Excel-like keyboard shortcuts to Step 1 once handlers + pagedTransactions are in scope.
+    useReviewCategorizeShortcuts({
+        enabled: currentStep === 1,
+        filteredTransactions: pagedTransactions,
+        allFilteredRows: filteredTransactions,
+        selectedIndices,
+        setSelectedIndices,
+        activeRowIndex,
+        setActiveRowIndex,
+        searchInputRef: reviewSearchInputRef,
+        filterDropdownRef: reviewFilterDropdownRef,
+        bulkCategory,
+        handlers: {
+            applyBulk: handleBulkApplyCategory,
+            bulkSwap: handleBulkSwap,
+            bulkDelete: handleBulkDelete,
+            autoLabel: handleAutoCategorize,
+            togglePreview: () => setShowPreviewPanel(v => !v),
+            toggleTotals: () => setShowCategoryTotals(v => !v),
+            continueNext: () => handleConfirmCategories(),
+            undo: () => reviewHistory.undo(),
+            redo: () => reviewHistory.redo(),
+            prevPage: goPrevReviewPage,
+            nextPage: goNextReviewPage,
+            pageSize: reviewPageSize === 0 ? pagedTransactions.length : reviewPageSize,
+        },
+        toast: reviewToast,
+        openHelp: () => setShowShortcutsHelp(true),
+    });
+
+    useEffect(() => {
+        if (activeRowIndex !== null && activeRowIndex >= pagedTransactions.length) {
+            setActiveRowIndex(pagedTransactions.length > 0 ? pagedTransactions.length - 1 : null);
+        }
+    }, [pagedTransactions.length, activeRowIndex]);
 
     const renderStep1 = () => {
         const currentPreviewKey = selectedFileFilter !== 'ALL' ? selectedFileFilter : (uniqueFiles[0] || '');
@@ -5855,21 +5953,24 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                             <div className="relative">
                                 <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                                 <input
+                                    ref={reviewSearchInputRef}
                                     type="text"
-                                    placeholder="Search description..."
+                                    placeholder="Search description...  (press / to focus)"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
                                     className="h-10 w-full rounded-xl border border-border/50 bg-background/70 pl-10 pr-3 text-sm font-medium text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                                 />
                             </div>
-                            <CategoryDropdown
-                                value={filterCategory}
-                                onChange={(val) => handleCategorySelection(val, { type: 'filter' })}
-                                customCategories={customCategories}
-                                bankCategories={bankCategories}
-                                className="!h-10 !w-full !rounded-xl border border-border/50 !bg-background/70 text-sm"
-                                showAllOption={true}
-                            />
+                            <div ref={reviewFilterDropdownRef}>
+                                <CategoryDropdown
+                                    value={filterCategory}
+                                    onChange={(val) => handleCategorySelection(val, { type: 'filter' })}
+                                    customCategories={customCategories}
+                                    bankCategories={bankCategories}
+                                    className="!h-10 !w-full !rounded-xl border border-border/50 !bg-background/70 text-sm"
+                                    showAllOption={true}
+                                />
+                            </div>
                             <select
                                 value={selectedFileFilter}
                                 onChange={(e) => setSelectedFileFilter(e.target.value)}
@@ -5890,6 +5991,42 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                 </button>
                             )}
                         </div>
+                    </div>
+
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setShowCategoryTotals(v => !v)}
+                                className={`h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-[0.22em] border transition-all ${showCategoryTotals ? 'bg-primary text-primary-foreground border-primary/50' : 'bg-card/40 border-border/50 text-muted-foreground hover:text-foreground'}`}
+                                title="Toggle category totals panel (Ctrl+T)"
+                            >
+                                Category Totals
+                            </button>
+                            <button
+                                onClick={() => reviewHistory.undo() ?? reviewToast.info('Nothing to undo')}
+                                disabled={!reviewHistory.canUndo}
+                                className="h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-[0.22em] border border-border/50 bg-card/40 text-muted-foreground hover:text-foreground transition-all disabled:opacity-30"
+                                title="Undo (Ctrl+Z)"
+                            >
+                                Undo
+                            </button>
+                            <button
+                                onClick={() => reviewHistory.redo() ?? reviewToast.info('Nothing to redo')}
+                                disabled={!reviewHistory.canRedo}
+                                className="h-8 px-3 rounded-lg text-[10px] font-black uppercase tracking-[0.22em] border border-border/50 bg-card/40 text-muted-foreground hover:text-foreground transition-all disabled:opacity-30"
+                                title="Redo (Ctrl+Y)"
+                            >
+                                Redo
+                            </button>
+                        </div>
+                        <button
+                            onClick={() => setShowShortcutsHelp(true)}
+                            className="h-8 px-3 flex items-center gap-1.5 rounded-lg text-[10px] font-black uppercase tracking-[0.22em] border border-border/50 bg-card/40 text-muted-foreground hover:text-foreground transition-all"
+                            title="Show keyboard shortcuts (?)"
+                        >
+                            <QuestionMarkCircleIcon className="w-3.5 h-3.5" />
+                            Shortcuts
+                        </button>
                     </div>
 
                     <div className="flex flex-col gap-3 xl:flex-row xl:flex-wrap xl:items-center xl:justify-between">
@@ -5956,6 +6093,14 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                     </div>
                 </div>
 
+                <SelectionStatusBar
+                    selectedIndices={selectedIndices}
+                    rows={editedTransactions.map((t, i) => ({ originalIndex: i, debit: t.debit, credit: t.credit }))}
+                    onClear={() => setSelectedIndices(new Set())}
+                    onApply={handleBulkApplyCategory}
+                    canApply={!!bulkCategory && selectedIndices.size > 0}
+                />
+
                 <div className="flex flex-col lg:flex-row gap-6 h-[600px] relative">
                     <div className="flex-1 overflow-auto bg-background/20 rounded-lg border border-border min-h-[400px]">
                         <table className="w-full text-sm text-left text-muted-foreground">
@@ -5964,8 +6109,23 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                     <th className="px-4 py-3 w-10">
                                         <input
                                             type="checkbox"
-                                            onChange={(e) => handleSelectAll(e.target.checked)}
-                                            checked={filteredTransactions.length > 0 && selectedIndices.size === filteredTransactions.length}
+                                            onChange={(e) => {
+                                                const pageIndices = pagedTransactions.map(t => t.originalIndex);
+                                                if (e.target.checked) {
+                                                    setSelectedIndices(prev => {
+                                                        const next = new Set(prev);
+                                                        pageIndices.forEach(i => next.add(i));
+                                                        return next;
+                                                    });
+                                                } else {
+                                                    setSelectedIndices(prev => {
+                                                        const next = new Set(prev);
+                                                        pageIndices.forEach(i => next.delete(i));
+                                                        return next;
+                                                    });
+                                                }
+                                            }}
+                                            checked={pagedTransactions.length > 0 && pagedTransactions.every(t => selectedIndices.has(t.originalIndex))}
                                             className="rounded border-border bg-muted/80 text-primary focus:ring-primary"
                                         />
                                     </th>
@@ -5996,10 +6156,16 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {filteredTransactions.map((t) => {
-
+                                {pagedTransactions.map((t, rowIdx) => {
+                                    const isActiveRow = rowIdx === activeRowIndex;
                                     return (
-                                        <tr key={t.originalIndex} className={`border-b border-border hover:bg-muted/50 ${selectedIndices.has(t.originalIndex) ? 'bg-primary/10' : ''}`}>
+                                        <tr
+                                            key={t.originalIndex}
+                                            data-row-index={rowIdx}
+                                            data-active={isActiveRow}
+                                            onClick={() => setActiveRowIndex(rowIdx)}
+                                            className={`border-b border-border hover:bg-muted/50 ${selectedIndices.has(t.originalIndex) ? 'bg-primary/10' : ''} ${isActiveRow ? 'ring-2 ring-inset ring-primary/60' : ''}`}
+                                        >
                                             <td className="px-4 py-2">
                                                 <input
                                                     type="checkbox"
@@ -6014,9 +6180,19 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                             </td>
                                             <td className="px-4 py-2 text-right font-mono">
                                                 {t.originalDebit !== undefined ? (
-                                                    <span className="text-status-danger text-xs">{formatNumber(t.originalDebit)}</span>
+                                                    <span className="text-status-danger text-xs" title="Currency-converted value (edit original via rate)">{formatNumber(t.originalDebit)}</span>
                                                 ) : (
-                                                    <span className="text-status-danger">{t.debit > 0 ? formatNumber(t.debit) : '-'}</span>
+                                                    <EditableAmountCell
+                                                        value={t.debit || 0}
+                                                        colorClass="text-status-danger"
+                                                        onBeforeCommit={() => reviewHistory.pushHistory('Edit Debit')}
+                                                        onCommit={(newVal) => setEditedTransactions(prev => {
+                                                            const updated = [...prev];
+                                                            updated[t.originalIndex] = { ...updated[t.originalIndex], debit: newVal };
+                                                            return updated;
+                                                        })}
+                                                        onError={(msg) => reviewToast.error(`Invalid: ${msg}`)}
+                                                    />
                                                 )}
                                             </td>
                                             <td className="px-0 py-2 text-center align-middle">
@@ -6030,9 +6206,19 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                             </td>
                                             <td className="px-4 py-2 text-right font-mono">
                                                 {t.originalCredit !== undefined ? (
-                                                    <span className="text-status-success text-xs">{formatNumber(t.originalCredit)}</span>
+                                                    <span className="text-status-success text-xs" title="Currency-converted value (edit original via rate)">{formatNumber(t.originalCredit)}</span>
                                                 ) : (
-                                                    <span className="text-status-success">{t.credit > 0 ? formatNumber(t.credit) : '-'}</span>
+                                                    <EditableAmountCell
+                                                        value={t.credit || 0}
+                                                        colorClass="text-status-success"
+                                                        onBeforeCommit={() => reviewHistory.pushHistory('Edit Credit')}
+                                                        onCommit={(newVal) => setEditedTransactions(prev => {
+                                                            const updated = [...prev];
+                                                            updated[t.originalIndex] = { ...updated[t.originalIndex], credit: newVal };
+                                                            return updated;
+                                                        })}
+                                                        onError={(msg) => reviewToast.error(`Invalid: ${msg}`)}
+                                                    />
                                                 )}
                                             </td>
 
@@ -6061,7 +6247,7 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                                         </tr>
                                     );
                                 })}
-                                {filteredTransactions.length === 0 && (
+                                {pagedTransactions.length === 0 && (
                                     <tr>
                                         <td colSpan={9} className="text-center py-10 text-muted-foreground">No transactions found.</td>
                                     </tr>
@@ -6112,8 +6298,22 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                             </div>
                         </div>
                     )}
+                    {showCategoryTotals && (
+                        <CategoryTotalsPanel
+                            rows={filteredTransactions}
+                            onClose={() => setShowCategoryTotals(false)}
+                        />
+                    )}
 
                 </div>
+
+                <TablePagination
+                    page={reviewPage}
+                    pageSize={reviewPageSize}
+                    totalRows={filteredTransactions.length}
+                    onPageChange={setReviewPage}
+                    onPageSizeChange={setReviewPageSize}
+                />
 
                 <div className="flex justify-between items-center bg-card/40 backdrop-blur-md p-6 rounded-2xl border border-border/50 shadow-2xl mt-6">
                     <div className="text-sm text-muted-foreground font-medium italic">
@@ -6151,6 +6351,11 @@ export const CtType2Results: React.FC<CtType2ResultsProps> = (props) => {
                         </button>
                     </div>
                 </div>
+
+                <KeyboardShortcutsModal
+                    isOpen={showShortcutsHelp}
+                    onClose={() => setShowShortcutsHelp(false)}
+                />
             </div>
         );
     };

@@ -52,6 +52,7 @@ import { LeadFormPage } from "./pages/LeadFormPage";
 import { DealFormPage } from "./pages/DealFormPage";
 import { CustomFieldsPage } from "./pages/CustomFieldsPage";
 import { ThemeSettingsProvider } from "./contexts/ThemeSettingsContext";
+import { ToastProvider } from "./contexts/ToastContext";
 
 
 // ✅ Auth Guard
@@ -174,9 +175,11 @@ export const App: React.FC = () => {
             <AuthProvider>
                 <ThemeSettingsProvider>
                     <DataProvider>
-                        <BrowserRouter>
-                            <AppRoutes />
-                        </BrowserRouter>
+                        <ToastProvider>
+                            <BrowserRouter>
+                                <AppRoutes />
+                            </BrowserRouter>
+                        </ToastProvider>
                     </DataProvider>
                 </ThemeSettingsProvider>
             </AuthProvider>
